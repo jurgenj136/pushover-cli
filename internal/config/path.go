@@ -55,6 +55,11 @@ func ResolvePaths(goos, home string, getenv func(string) string) (Paths, error) 
 
 // DefaultPaths resolves the current user's platform-standard locations.
 func DefaultPaths() (Paths, error) {
+	if runtime.GOOS == "linux" {
+		if configured := os.Getenv("XDG_CONFIG_HOME"); configured != "" && !filepath.IsAbs(configured) {
+			return Paths{}, errors.New("XDG_CONFIG_HOME must be absolute")
+		}
+	}
 	configRoot, err := os.UserConfigDir()
 	if err != nil {
 		return Paths{}, err
