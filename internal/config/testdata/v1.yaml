@@ -1,0 +1,16 @@
+schema_version: 1
+backend:
+    type: native
+profiles:
+    default:
+        name: default
+        token_ref: secret-token
+        defaults:
+            title: Alerts
+            ttl: 15m0s
+recipients:
+    ops:
+        alias: ops
+        user_key_ref: secret-user
+        kind: user
+        validated: true
