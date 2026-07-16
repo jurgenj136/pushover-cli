@@ -18,6 +18,11 @@ import (
 
 const ageFileName = "secrets.age"
 const identityFileName = "identity.txt"
+const maxSecretMapBytes = 1 << 20
+
+// An age header, stanza, and stream framing are small relative to our map
+// limit. The conservative 64KiB allowance bounds malformed input allocation.
+const maxEncryptedMapBytes = maxSecretMapBytes + 64<<10
 
 type passphraseProvider func(context.Context) ([]byte, error)
 
@@ -45,7 +50,7 @@ type ageDirectory interface {
 	Close() error
 }
 type ageFilesystem interface {
-	ReadFile(string) ([]byte, error)
+	ReadFileLimited(string, int) ([]byte, error)
 	WriteFile(string, []byte, os.FileMode) error
 	MkdirAll(string, os.FileMode) error
 	Chmod(string, os.FileMode) error
@@ -56,7 +61,22 @@ type ageFilesystem interface {
 }
 type osAgeFilesystem struct{}
 
-func (osAgeFilesystem) ReadFile(path string) ([]byte, error) { return os.ReadFile(path) }
+func (osAgeFilesystem) ReadFileLimited(path string, limit int) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > limit {
+		wipe(data)
+		return nil, errTooLarge
+	}
+	return data, nil
+}
 func (osAgeFilesystem) WriteFile(path string, value []byte, mode os.FileMode) error {
 	return os.WriteFile(path, value, mode)
 }
@@ -125,6 +145,13 @@ type ageDurabilityError struct{ cause error }
 
 func (e *ageDurabilityError) Error() string { return "secret storage durability is unknown" }
 func (e *ageDurabilityError) Unwrap() error { return e.cause }
+
+type identityDurabilityError struct{ cause error }
+
+func (e *identityDurabilityError) Error() string { return "identity storage durability is unknown" }
+func (e *identityDurabilityError) Unwrap() error { return e.cause }
+
+var errTooLarge = errors.New("secret storage exceeds size limit")
 
 func (s *AgeStore) Get(ctx context.Context, ref domain.SecretRef) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -196,7 +223,10 @@ func (s *AgeStore) load(ctx context.Context) (map[string][]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	data, err := s.fs.ReadFile(s.path)
+	if err := s.hardenExisting(s.path); err != nil {
+		return nil, err
+	}
+	data, err := s.fs.ReadFileLimited(s.path, maxEncryptedMapBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return make(map[string][]byte), nil
 	}
@@ -212,12 +242,12 @@ func (s *AgeStore) load(ctx context.Context) (map[string][]byte, error) {
 	if err != nil {
 		return nil, unavailable(err)
 	}
-	plain, err := io.ReadAll(io.LimitReader(reader, (1<<20)+1))
+	plain, err := io.ReadAll(io.LimitReader(reader, maxSecretMapBytes+1))
 	if err != nil {
 		return nil, unavailable(err)
 	}
 	defer wipe(plain)
-	if len(plain) > 1<<20 {
+	if len(plain) > maxSecretMapBytes {
 		return nil, unavailable(errors.New("encrypted secret map exceeds limit"))
 	}
 	var envelope ageEnvelope
@@ -240,12 +270,15 @@ func (s *AgeStore) save(ctx context.Context, values map[string][]byte) error {
 		return unavailable(err)
 	}
 	defer wipe(plain)
+	if len(plain) > maxSecretMapBytes {
+		return unavailable(errTooLarge)
+	}
 	var encrypted bytes.Buffer
 	writer, err := age.Encrypt(&encrypted, recipient)
 	if err != nil {
 		return unavailable(err)
 	}
-	if _, err := writer.Write(plain); err != nil {
+	if err := writeAllAge(writer, plain); err != nil {
 		_ = writer.Close()
 		return unavailable(err)
 	}
@@ -274,7 +307,10 @@ func (s *AgeStore) save(ctx context.Context, values map[string][]byte) error {
 	if err := protectAgePath(temporaryName); err != nil {
 		return failed(err)
 	}
-	if _, err := temporary.Write(encrypted.Bytes()); err != nil {
+	if encrypted.Len() > maxEncryptedMapBytes {
+		return failed(errTooLarge)
+	}
+	if err := writeAllAge(temporary, encrypted.Bytes()); err != nil {
 		return failed(err)
 	}
 	if err := temporary.Sync(); err != nil {
@@ -292,11 +328,11 @@ func (s *AgeStore) save(ctx context.Context, values map[string][]byte) error {
 		return unavailable(err)
 	}
 	if err := protectAgePath(s.path); err != nil {
-		return unavailable(err)
+		return &ageDurabilityError{cause: err}
 	}
 	directory, err := s.fs.Open(filepath.Dir(s.path))
 	if err != nil {
-		return unavailable(err)
+		return &ageDurabilityError{cause: err}
 	}
 	if err := directory.Sync(); err != nil {
 		_ = directory.Close()
@@ -333,7 +369,10 @@ func (s *AgeStore) credentials(ctx context.Context) (age.Identity, age.Recipient
 		identity.SetMaxWorkFactor(18)
 		return identity, recipient, func() {}, nil
 	}
-	data, err := s.fs.ReadFile(s.identityPath)
+	if err := s.hardenExisting(s.identityPath); err != nil {
+		return nil, nil, func() {}, err
+	}
+	data, err := s.fs.ReadFileLimited(s.identityPath, 1024)
 	if errors.Is(err, os.ErrNotExist) {
 		// Identity creation is reachable only after AgeFactory accepted the
 		// caller's explicit AllowIdentity authorization and identity mode.
@@ -370,7 +409,7 @@ func (s *AgeStore) writePrivate(ctx context.Context, path string, value []byte) 
 	if err := protectAgePath(temporaryName); err != nil {
 		return fail(err)
 	}
-	if _, err := temporary.Write(value); err != nil {
+	if err := writeAllAge(temporary, value); err != nil {
 		return fail(err)
 	}
 	if err := temporary.Sync(); err != nil {
@@ -388,18 +427,50 @@ func (s *AgeStore) writePrivate(ctx context.Context, path string, value []byte) 
 		return err
 	}
 	if err := protectAgePath(path); err != nil {
-		return &ageDurabilityError{cause: err}
+		return &identityDurabilityError{cause: err}
 	}
 	directory, err := s.fs.Open(filepath.Dir(path))
 	if err != nil {
-		return &ageDurabilityError{cause: err}
+		return &identityDurabilityError{cause: err}
 	}
 	if err := directory.Sync(); err != nil {
 		_ = directory.Close()
-		return &ageDurabilityError{cause: err}
+		return &identityDurabilityError{cause: err}
 	}
 	if err := directory.Close(); err != nil {
-		return &ageDurabilityError{cause: err}
+		return &identityDurabilityError{cause: err}
+	}
+	return nil
+}
+
+// hardenExisting upgrades existing private material before it is parsed. A
+// missing path is normal on first use; every other hardening failure blocks use.
+func (s *AgeStore) hardenExisting(path string) error {
+	err := s.fs.Chmod(path, 0o600)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return unavailable(err)
+	}
+	if err := protectAgePath(path); err != nil {
+		return unavailable(err)
+	}
+	return nil
+}
+
+func writeAllAge(writer io.Writer, value []byte) error {
+	for len(value) > 0 {
+		count, err := writer.Write(value)
+		if count > 0 {
+			value = value[count:]
+		}
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return io.ErrShortWrite
+		}
 	}
 	return nil
 }

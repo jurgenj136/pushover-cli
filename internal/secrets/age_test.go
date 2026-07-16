@@ -1,7 +1,9 @@
 package secrets
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,6 +108,92 @@ func TestAgeIdentityModeCreatesOnlyAfterExplicitAuthorization(t *testing.T) {
 	}
 }
 
+func TestAgeHardenExistingMapAndIdentityBeforeUse(t *testing.T) {
+	dir := t.TempDir()
+	passBackend := config.Backend{Type: "file", Metadata: map[string]string{"mode": "passphrase"}}
+	store, err := (AgeFactory{DataDir: dir, Passphrase: passphrase}).Open(context.Background(), passBackend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Put(context.Background(), []byte("map"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, ageFileName), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(context.Background(), ref); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(filepath.Join(dir, ageFileName)); info.Mode().Perm() != 0o600 {
+		t.Fatalf("map mode=%o", info.Mode().Perm())
+	}
+	identityBackend := config.Backend{Type: "file", Metadata: map[string]string{"mode": "identity"}}
+	identityDir := t.TempDir()
+	identity, err := (AgeFactory{DataDir: identityDir, AllowIdentity: true}).Open(context.Background(), identityBackend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.Put(context.Background(), []byte("identity")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(identityDir, identityFileName), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.Put(context.Background(), []byte("again")); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(filepath.Join(identityDir, identityFileName)); info.Mode().Perm() != 0o600 {
+		t.Fatalf("identity mode=%o", info.Mode().Perm())
+	}
+}
+
+func TestAgeRejectsOversizedPlaintextAndCiphertext(t *testing.T) {
+	dir := t.TempDir()
+	backend := config.Backend{Type: "file", Metadata: map[string]string{"mode": "passphrase"}}
+	store, err := (AgeFactory{DataDir: dir, Passphrase: passphrase}).Open(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Put(context.Background(), make([]byte, maxSecretMapBytes)); err == nil {
+		t.Fatal("oversized map persisted")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ageFileName)); !os.IsNotExist(err) {
+		t.Fatalf("oversized map created a file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ageFileName), make([]byte, maxEncryptedMapBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(context.Background(), "missing"); err == nil {
+		t.Fatal("oversized ciphertext was accepted")
+	}
+}
+
+type chunkWriter struct {
+	bytes.Buffer
+	size int
+}
+
+func (w *chunkWriter) Write(value []byte) (int, error) {
+	if len(value) > w.size {
+		value = value[:w.size]
+	}
+	return w.Buffer.Write(value)
+}
+
+type zeroWriter struct{}
+
+func (zeroWriter) Write([]byte) (int, error) { return 0, nil }
+func TestWriteAllAgeHandlesShortWrites(t *testing.T) {
+	writer := &chunkWriter{size: 1}
+	if err := writeAllAge(writer, []byte("abcdef")); err != nil || writer.String() != "abcdef" {
+		t.Fatalf("short write handling: %q %v", writer.String(), err)
+	}
+	if err := writeAllAge(zeroWriter{}, []byte("x")); err != io.ErrShortWrite {
+		t.Fatalf("zero write=%v", err)
+	}
+}
+
 func TestAgeAtomicRenameFailurePreservesPriorCiphertext(t *testing.T) {
 	dir := t.TempDir()
 	backend := config.Backend{Type: "file", Metadata: map[string]string{"mode": "passphrase"}}
@@ -139,5 +227,18 @@ func TestAgeDirectorySyncFailureIsReturned(t *testing.T) {
 	ref, err := store.Put(context.Background(), []byte("value"))
 	if err == nil || ref == "" {
 		t.Fatal("directory sync failure succeeded")
+	}
+}
+
+func TestIdentityDurabilityFailureDoesNotReturnSecretRef(t *testing.T) {
+	dir := t.TempDir()
+	backend := config.Backend{Type: "file", Metadata: map[string]string{"mode": "identity"}}
+	store, err := (AgeFactory{DataDir: dir, AllowIdentity: true, fs: syncFailFS{}}).Open(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Put(context.Background(), []byte("value"))
+	if err == nil || ref != "" {
+		t.Fatalf("identity durability result ref=%q err=%v", ref, err)
 	}
 }
