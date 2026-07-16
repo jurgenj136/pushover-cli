@@ -102,6 +102,17 @@ func TestExecuteRejectsStructuralInputConflictsBeforeReaders(t *testing.T) {
 				return strings.Repeat("x", domain.IdentifierLength), true
 			}},
 		},
+		{
+			name: "environment credentials conflict with explicitly empty profile",
+			args: []string{"--profile=", "send", "body"},
+			deps: Dependencies{lookupEnv: func(string) (string, bool) {
+				return strings.Repeat("x", domain.IdentifierLength), true
+			}},
+		},
+		{
+			name: "credentials stdin conflicts with explicitly empty profile",
+			args: []string{"--profile=", "send", "--credentials-stdin", "body"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -240,6 +251,104 @@ func TestExecuteEnvironmentPresenceUsesLookupEnvSetBits(t *testing.T) {
 			t.Fatalf("empty environment was treated as absent: %q", stderr.String())
 		}
 	})
+}
+
+func TestExecuteEphemeralDryRunSkipsConfiguredRuntime(t *testing.T) {
+	tests := []struct {
+		name   string
+		args   []string
+		input  string
+		lookup func(string) (string, bool)
+	}{
+		{
+			name: "environment credentials",
+			args: []string{"--json", "send", "--dry-run", "body"},
+			lookup: func(name string) (string, bool) {
+				if name == "PUSHOVER_TOKEN" {
+					return strings.Repeat("t", domain.IdentifierLength), true
+				}
+				return strings.Repeat("u", domain.IdentifierLength), true
+			},
+		},
+		{
+			name:  "credentials stdin",
+			args:  []string{"--json", "send", "--credentials-stdin", "--dry-run", "body"},
+			input: `{"token":"` + strings.Repeat("t", domain.IdentifierLength) + `","user_key":"` + strings.Repeat("u", domain.IdentifierLength) + `"}`,
+			lookup: func(string) (string, bool) {
+				return "", false
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtimeCalls := 0
+			deps := Dependencies{
+				Output:    output.NewFactory(),
+				lookupEnv: test.lookup,
+				runtime: func(context.Context, operation.Scope) (preflight.Builder, delivery.Runner, error) {
+					runtimeCalls++
+					return preflight.Builder{}, delivery.Runner{}, apperror.New("configuration_unavailable", apperror.CategoryConfig, "configuration is unavailable")
+				},
+			}
+			var stdout, stderr bytes.Buffer
+			streams := IO{In: strings.NewReader(test.input), Out: &stdout, Err: &stderr, IsTerminal: func(uintptr) bool { return false }}
+			if got := Execute(context.Background(), test.args, streams, deps); got != 0 {
+				t.Fatalf("exit = %d; stderr=%q", got, stderr.String())
+			}
+			if runtimeCalls != 0 {
+				t.Fatalf("ephemeral dry run initialized configured runtime %d times", runtimeCalls)
+			}
+			if !strings.Contains(stdout.String(), `"status":"dry_run"`) || !strings.Contains(stdout.String(), `"outcome":"planned"`) {
+				t.Fatalf("stdout = %q, want planned dry-run JSON", stdout.String())
+			}
+		})
+	}
+}
+
+func TestExecuteConfiguredDryRunUsesConfiguredRuntime(t *testing.T) {
+	configured, _ := configuredDependencies(t, config.MessageDefaults{}, nil)
+	runtimeCalls := 0
+	deps := Dependencies{
+		Output:    output.NewFactory(),
+		lookupEnv: func(string) (string, bool) { return "", false },
+		runtime: func(context.Context, operation.Scope) (preflight.Builder, delivery.Runner, error) {
+			runtimeCalls++
+			return *configured.Preflight, *configured.Delivery, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	if got := Execute(context.Background(), []string{"send", "--profile", "primary", "--to", "alice", "--dry-run", "body"}, testIO(&stdout, &stderr), deps); got != 0 {
+		t.Fatalf("exit = %d; stderr=%q", got, stderr.String())
+	}
+	if runtimeCalls != 1 {
+		t.Fatalf("configured profile and aliases initialized runtime %d times, want 1", runtimeCalls)
+	}
+}
+
+func TestOpenSendRuntimeKeepsOneOffSendsCapable(t *testing.T) {
+	scope, err := (operation.Factory{}).Start(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scope.Close()
+	runtimeCalls := 0
+	deps := Dependencies{runtime: func(context.Context, operation.Scope) (preflight.Builder, delivery.Runner, error) {
+		runtimeCalls++
+		return preflight.Builder{}, delivery.Runner{}, apperror.New("configuration_unavailable", apperror.CategoryConfig, "configuration is unavailable")
+	}}
+	builder, runner, err := deps.openSendRuntime(scope.Context(), scope, preflight.Request{Resolve: resolver.Input{
+		EnvToken: strings.Repeat("t", domain.IdentifierLength), EnvTokenSet: true,
+		EnvUserKey: strings.Repeat("u", domain.IdentifierLength), EnvUserKeySet: true,
+	}, Validate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeCalls != 0 {
+		t.Fatalf("one-off send initialized configured runtime %d times", runtimeCalls)
+	}
+	if builder.Resolver == nil || builder.Attachments == nil || builder.Validator == nil || runner.Client == nil {
+		t.Fatal("one-off runtime is not send-capable")
+	}
 }
 
 func TestExecuteBodyIsBoundedAndRemoteDryRunNetworkIsOptIn(t *testing.T) {

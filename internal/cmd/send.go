@@ -62,7 +62,7 @@ func executeSend(ctx context.Context, streams IO, deps Dependencies, root rootCo
 	}
 	defer scope.Close()
 
-	builder, runner, err := deps.openRuntime(scope.Context(), scope)
+	builder, runner, err := deps.openSendRuntime(scope.Context(), scope, request)
 	if err != nil {
 		return renderErrorWithColor(streams, deps, mode, "send", asAppError(err), root.NoColor)
 	}
@@ -134,7 +134,7 @@ func (s SendCommand) request(parsed *kong.Context, streams IO, deps Dependencies
 	}
 	token, tokenSet := deps.environment("PUSHOVER_TOKEN")
 	userKey, userKeySet := deps.environment("PUSHOVER_USER_KEY")
-	if err := validateCredentialContext(profile, s.To, credentialsStdin, tokenSet, userKeySet); err != nil {
+	if err := validateCredentialContext(flagSeen(parsed, "profile"), s.To, credentialsStdin, tokenSet, userKeySet); err != nil {
 		return preflight.Request{}, err
 	}
 	input := resolver.Input{
@@ -174,14 +174,14 @@ func (s SendCommand) request(parsed *kong.Context, streams IO, deps Dependencies
 	}, nil
 }
 
-func validateCredentialContext(profile string, aliases []string, credentialsStdin, tokenSet, userKeySet bool) error {
+func validateCredentialContext(profileSet bool, aliases []string, credentialsStdin, tokenSet, userKeySet bool) error {
 	if tokenSet != userKeySet {
 		return apperror.New("environment_credentials_incomplete", apperror.CategoryUsage, "environment credentials must be supplied together")
 	}
-	if tokenSet && (profile != "" || len(aliases) != 0 || credentialsStdin) {
+	if tokenSet && (profileSet || len(aliases) != 0 || credentialsStdin) {
 		return apperror.New("credential_context_conflict", apperror.CategoryUsage, "credential sources cannot be combined")
 	}
-	if credentialsStdin && (profile != "" || len(aliases) != 0) {
+	if credentialsStdin && (profileSet || len(aliases) != 0) {
 		return apperror.New("credential_context_conflict", apperror.CategoryUsage, "credential sources cannot be combined")
 	}
 	return nil

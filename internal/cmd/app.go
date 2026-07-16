@@ -67,6 +67,31 @@ func (d Dependencies) openRuntime(ctx context.Context, scope operation.Scope) (p
 	return d.runtime(ctx, scope)
 }
 
+func (d Dependencies) openSendRuntime(ctx context.Context, scope operation.Scope, request preflight.Request) (preflight.Builder, delivery.Runner, error) {
+	if d.Preflight == nil && d.Delivery == nil && suppliedCredentials(request.Resolve) {
+		builder := ephemeralRuntime(scope, request.DryRun)
+		return builder, delivery.Runner{Client: builder.Validator, Scope: scope}, nil
+	}
+	return d.openRuntime(ctx, scope)
+}
+
+func suppliedCredentials(input resolver.Input) bool {
+	return input.EnvTokenSet || input.EnvUserKeySet || input.Credentials != nil
+}
+
+func ephemeralRuntime(scope operation.Scope, dryRun bool) preflight.Builder {
+	builder := preflight.Builder{
+		Resolver:    &resolver.Resolver{},
+		Attachments: attachment.RemoteLoader{Scope: scope},
+		Encryptor:   e2ee.Encryptor{},
+		Scope:       scope,
+	}
+	if !dryRun {
+		builder.Validator = pushover.NewClient(nil)
+	}
+	return builder
+}
+
 func (d Dependencies) environment(name string) (string, bool) {
 	if d.lookupEnv != nil {
 		return d.lookupEnv(name)

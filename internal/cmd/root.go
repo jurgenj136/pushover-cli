@@ -45,7 +45,7 @@ func Execute(ctx context.Context, args []string, streams IO, deps Dependencies) 
 		kong.Exit(func(code int) { capturedExit = &code }),
 	)
 	if err != nil {
-		return renderError(streams, deps, output.Human, "send", apperror.New("parser_unavailable", apperror.CategoryInternal, apperror.MessageInternal))
+		return renderError(streams, deps, output.Human, "send", apperror.New("parser_unavailable", apperror.CategoryInternal, apperror.MessageInternal), preScannedNoColor(args))
 	}
 	parsed, parseErr := parser.Parse(args)
 	if capturedExit != nil {
@@ -55,23 +55,23 @@ func Execute(ctx context.Context, args []string, streams IO, deps Dependencies) 
 		return renderParseError(streams, deps, args, parseErr)
 	}
 	if parsed == nil {
-		return renderError(streams, deps, preScannedMode(args), "send", apperror.New("invalid_command", apperror.CategoryUsage, "invalid command line"))
+		return renderError(streams, deps, preScannedMode(args), "send", apperror.New("invalid_command", apperror.CategoryUsage, "invalid command line"), preScannedNoColor(args))
 	}
 	mode := selectedMode(cli.JSON, cli.Plain)
 	if cli.JSON && cli.Plain {
-		return renderError(streams, deps, mode, selectedCommand(parsed), apperror.New("output_mode_conflict", apperror.CategoryUsage, "--json and --plain cannot be combined"))
+		return renderError(streams, deps, mode, selectedCommand(parsed), apperror.New("output_mode_conflict", apperror.CategoryUsage, "--json and --plain cannot be combined"), cli.NoColor)
 	}
 	selected := selectedCommand(parsed)
 	if selected == "" {
-		return renderError(streams, deps, mode, "send", apperror.New("command_required", apperror.CategoryUsage, "a command is required (try 'send')"))
+		return renderError(streams, deps, mode, "send", apperror.New("command_required", apperror.CategoryUsage, "a command is required (try 'send')"), cli.NoColor)
 	}
 	switch selected {
 	case "send":
 		return executeSend(ctx, streams, deps, cli, parsed)
 	case "completion":
-		return executeCompletion(streams, deps, mode, cli.Completion)
+		return executeCompletion(streams, deps, mode, cli.Completion, cli.NoColor)
 	default:
-		return renderError(streams, deps, mode, "send", apperror.New("command_required", apperror.CategoryUsage, "a command is required"))
+		return renderError(streams, deps, mode, "send", apperror.New("command_required", apperror.CategoryUsage, "a command is required"), cli.NoColor)
 	}
 }
 
@@ -108,6 +108,19 @@ func preScannedMode(args []string) output.Mode {
 	return selectedMode(jsonMode, plainMode)
 }
 
+func preScannedNoColor(args []string) bool {
+	noColor := false
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if value, ok := scannedBool(arg, "--no-color"); ok {
+			noColor = value
+		}
+	}
+	return noColor
+}
+
 func scannedBool(arg, flag string) (bool, bool) {
 	if arg == flag {
 		return true, true
@@ -134,11 +147,11 @@ func renderParseError(streams IO, deps Dependencies, args []string, _ error) int
 			break
 		}
 	}
-	return renderError(streams, deps, preScannedMode(args), command, apperror.New("invalid_command", apperror.CategoryUsage, "invalid command line"))
+	return renderError(streams, deps, preScannedMode(args), command, apperror.New("invalid_command", apperror.CategoryUsage, "invalid command line"), preScannedNoColor(args))
 }
 
-func renderError(streams IO, deps Dependencies, mode output.Mode, command string, err *apperror.Error) int {
-	return renderErrorWithColor(streams, deps, mode, command, err, false)
+func renderError(streams IO, deps Dependencies, mode output.Mode, command string, err *apperror.Error, noColor bool) int {
+	return renderErrorWithColor(streams, deps, mode, command, err, noColor)
 }
 
 func renderErrorWithColor(streams IO, deps Dependencies, mode output.Mode, command string, err *apperror.Error, noColor bool) int {

@@ -74,3 +74,37 @@ func TestPreScannedModeStopsAtEndOfFlags(t *testing.T) {
 		t.Fatalf("mode before -- = %q, want json", got)
 	}
 }
+
+func TestPreScannedNoColorUsesEffectiveBooleanBeforeEndOfFlags(t *testing.T) {
+	if !preScannedNoColor([]string{"--no-color", "send", "--", "--no-color=false"}) {
+		t.Fatal("expected --no-color before -- to apply")
+	}
+	if preScannedNoColor([]string{"--no-color", "--no-color=false", "send"}) {
+		t.Fatal("expected explicit false to disable pre-scanned no-color")
+	}
+}
+
+func TestExecuteNoColorAppliesToAllErrorPaths(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "root", args: []string{"--no-color"}},
+		{name: "parse", args: []string{"--no-color", "unknown"}},
+		{name: "completion", args: []string{"--no-color", "--plain", "completion", "bash"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			factory := &recordingFactory{renderer: noOpRenderer{}}
+			deps := Dependencies{Output: factory, lookupEnv: func(string) (string, bool) { return "", false }}
+			stdout, stderr := &fdBuffer{fd: 1}, &fdBuffer{fd: 2}
+			streams := IO{In: strings.NewReader(""), Out: stdout, Err: stderr, IsTerminal: func(uintptr) bool { return true }}
+			if got := Execute(context.Background(), test.args, streams, deps); got != 2 {
+				t.Fatalf("exit = %d, want usage error", got)
+			}
+			if len(factory.options) != 1 || !factory.options[0].TTY || factory.options[0].Color {
+				t.Fatalf("renderer options = %#v, want no color on TTY", factory.options)
+			}
+		})
+	}
+}

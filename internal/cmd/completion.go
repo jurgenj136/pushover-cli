@@ -8,25 +8,25 @@ import (
 	"github.com/jurgenj136/pushover-cli/internal/output"
 )
 
-func executeCompletion(streams IO, deps Dependencies, mode output.Mode, command completionCommand) int {
+func executeCompletion(streams IO, deps Dependencies, mode output.Mode, command completionCommand, noColor bool) int {
 	if mode == output.Plain {
-		return renderError(streams, deps, mode, "completion", apperror.New("plain_unsupported", apperror.CategoryUsage, "plain output is unsupported for this command"))
+		return renderError(streams, deps, mode, "completion", apperror.New("plain_unsupported", apperror.CategoryUsage, "plain output is unsupported for this command"), noColor)
 	}
 	script, err := completionScript(command.Shell)
 	if err != nil {
-		return renderError(streams, deps, mode, "completion", asAppError(err))
+		return renderError(streams, deps, mode, "completion", asAppError(err), noColor)
 	}
-	renderer, err := newRenderer(streams, deps, mode, false, streams.Out)
+	renderer, err := newRenderer(streams, deps, mode, noColor, streams.Out)
 	if err != nil {
-		return renderError(streams, deps, mode, "completion", asAppError(err))
+		return renderError(streams, deps, mode, "completion", asAppError(err), noColor)
 	}
 	result := output.CompletionResult{Meta: output.Meta{Command: "completion", Status: "success"}, Shell: command.Shell, Script: script}
 	var encoded bytes.Buffer
 	if err := renderer.Result(&encoded, result); err != nil {
-		return renderError(streams, deps, mode, "completion", asAppError(err))
+		return renderError(streams, deps, mode, "completion", asAppError(err), noColor)
 	}
 	if err := commitOutput(streams.Out, encoded.Bytes()); err != nil {
-		return renderError(streams, deps, mode, "completion", asAppError(err))
+		return renderError(streams, deps, mode, "completion", asAppError(err), noColor)
 	}
 	return 0
 }
