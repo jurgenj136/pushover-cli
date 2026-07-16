@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
 
 func TestLoadMigratesPrivateV0WithDurableBackup(t *testing.T) {
 	path := "/config/config.yaml"
-	original := []byte("schema_version: 0\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n")
+	original := privateV0Fixture(t)
 	filesystem := newFakeFS()
 	filesystem.contents[path] = original
 	config, err := NewFileStoreWith(path, filesystem, fixedClock{}).Load(context.Background())
@@ -34,6 +35,14 @@ func TestLoadRefusesFutureOrMissingSchemaWithoutWrites(t *testing.T) {
 		"schema_version: 2\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
 		"backend: {type: native}\nprofiles: {}\nrecipients: {}\n",
 		"schema_version: -1\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
+		"schema_version: -0\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
+		"schema_version: null\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
+		"schema_version: 0.1\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
+		"schema_version: 1.9\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
+		"schema_version: '1'\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
+		"schema_version: true\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
+		"schema_version: 0x1\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
+		"schema_version: 01\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n",
 	} {
 		filesystem := newFakeFS()
 		filesystem.contents["/config/config.yaml"] = []byte(document)
@@ -48,7 +57,7 @@ func TestLoadRefusesFutureOrMissingSchemaWithoutWrites(t *testing.T) {
 
 func TestMigrationBackupCollisionAndCommitFailureKeepOriginal(t *testing.T) {
 	path := "/config/config.yaml"
-	original := []byte("schema_version: 0\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n")
+	original := privateV0Fixture(t)
 	backup := "/config/config.yaml.v0.19700101T000000.123000000Z.bak"
 	filesystem := newFakeFS()
 	filesystem.contents[path] = original
@@ -67,7 +76,7 @@ func TestMigrationBackupCollisionAndCommitFailureKeepOriginal(t *testing.T) {
 
 func TestMigrationCommitFailureRetainsDurableBackup(t *testing.T) {
 	path := "/config/config.yaml"
-	original := []byte("schema_version: 0\nbackend: {type: native}\nprofiles: {}\nrecipients: {}\n")
+	original := privateV0Fixture(t)
 	backup := "/config/config.yaml.v0.19700101T000000.123000000Z.bak"
 	filesystem := newFakeFS()
 	filesystem.contents[path] = original
@@ -82,4 +91,13 @@ func TestMigrationCommitFailureRetainsDurableBackup(t *testing.T) {
 	if got := string(filesystem.contents[backup]); got != string(original) {
 		t.Fatalf("durable backup missing: %q", got)
 	}
+}
+
+func privateV0Fixture(t *testing.T) []byte {
+	t.Helper()
+	data, err := os.ReadFile("testdata/v0.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

@@ -1,0 +1,6 @@
+# Private pre-release migration fixture; not a public compatibility contract.
+schema_version: 0
+backend:
+    type: native
+profiles: {}
+recipients: {}

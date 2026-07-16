@@ -10,17 +10,39 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func (osFileSystem) SyncDir(path string) error {
+type windowsDirectoryOps interface {
+	Open(string, uint32) (windows.Handle, error)
+	Flush(windows.Handle) error
+	Close(windows.Handle) error
+}
+
+type nativeWindowsDirectoryOps struct{}
+
+func (nativeWindowsDirectoryOps) Open(path string, access uint32) (windows.Handle, error) {
 	pointer, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	handle, err := windows.CreateFile(pointer, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	return windows.CreateFile(pointer, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+}
+func (nativeWindowsDirectoryOps) Flush(handle windows.Handle) error {
+	return windows.FlushFileBuffers(handle)
+}
+func (nativeWindowsDirectoryOps) Close(handle windows.Handle) error {
+	return windows.CloseHandle(handle)
+}
+
+func (osFileSystem) SyncDir(path string) error {
+	return syncWindowsDirectory(nativeWindowsDirectoryOps{}, path)
+}
+
+func syncWindowsDirectory(ops windowsDirectoryOps, path string) error {
+	handle, err := ops.Open(path, windows.GENERIC_READ|windows.GENERIC_WRITE)
 	if err != nil {
 		return fmt.Errorf("open directory for flush: %w", err)
 	}
-	defer windows.CloseHandle(handle)
-	if err := windows.FlushFileBuffers(handle); err != nil {
+	defer ops.Close(handle)
+	if err := ops.Flush(handle); err != nil {
 		if errors.Is(err, windows.ERROR_INVALID_FUNCTION) || errors.Is(err, windows.ERROR_NOT_SUPPORTED) {
 			return nil
 		}

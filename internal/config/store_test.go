@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -147,15 +148,45 @@ func TestCommitValidatesBeforeMutation(t *testing.T) {
 }
 
 func TestCommitErrorRedactsUnderlyingPaths(t *testing.T) {
-	underlying := errors.New("open /Users/alice/.config/pushover-cli/config.yaml: permission denied")
-	err := &CommitError{Outcome: Unchanged, Err: underlying}
-	if strings.Contains(err.Error(), "/Users/alice") || strings.Contains(err.Error(), "permission denied") {
-		t.Fatalf("CommitError leaked private cause: %q", err.Error())
+	underlying := pathCause("open /Users/alice/.config/pushover-cli/config.yaml: permission denied")
+	err := NewCommitError(Unchanged, underlying)
+	for _, candidate := range []error{err, fmt.Errorf("trusted wrapper: %w", err)} {
+		for _, format := range []string{"%v", "%+v", "%#v"} {
+			rendered := fmt.Sprintf(format, candidate)
+			if strings.Contains(rendered, "/Users/alice") || strings.Contains(rendered, "permission denied") {
+				t.Fatalf("CommitError leaked private cause with %s: %q", format, rendered)
+			}
+		}
 	}
 	if !errors.Is(err, underlying) {
 		t.Fatal("CommitError must retain its private unwrap cause")
 	}
 }
+
+func TestOutcomeOfHandlesTypedNilAndWrappedErrors(t *testing.T) {
+	var typedNil *CommitError
+	var asError error = typedNil
+	if got := OutcomeOf(asError); got != Unchanged {
+		t.Fatalf("typed nil outcome = %s", got)
+	}
+	if got := typedNil.Error(); got != "configuration was not changed" {
+		t.Fatalf("typed nil Error = %q", got)
+	}
+	if typedNil.Unwrap() != nil {
+		t.Fatal("typed nil Unwrap must be nil")
+	}
+	if got := OutcomeOf(errors.New("ordinary")); got != Unchanged {
+		t.Fatalf("ordinary outcome = %s", got)
+	}
+	wrapped := fmt.Errorf("trusted wrapper: %w", NewCommitError(AppliedDurabilityUnknown, errors.New("private")))
+	if got := OutcomeOf(wrapped); got != AppliedDurabilityUnknown {
+		t.Fatalf("wrapped outcome = %s", got)
+	}
+}
+
+type pathCause string
+
+func (e pathCause) Error() string { return string(e) }
 
 func validConfig() Config {
 	return Config{SchemaVersion: CurrentSchemaVersion, Backend: Backend{Type: "native"}, DefaultProfile: "default", Profiles: map[string]Profile{"default": {Name: "default", TokenRef: domain.SecretRef("token-ref"), Defaults: MessageDefaults{Title: "Alerts", TTL: 15 * time.Minute}}}, Recipients: map[string]Recipient{"ops": {Alias: "ops", UserKeyRef: domain.SecretRef("user-ref"), Kind: domain.KindUser, Validated: true}}}

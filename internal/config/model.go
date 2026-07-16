@@ -94,15 +94,34 @@ const (
 // CommitError marks the point at which a config write failed.
 type CommitError struct {
 	Outcome CommitOutcome
-	Err     error
+	cause   error
+}
+
+// NewCommitError lets transaction coordinators and cross-package test fakes
+// express an inspected commit outcome without exposing the underlying cause.
+func NewCommitError(outcome CommitOutcome, cause error) *CommitError {
+	if outcome != AppliedDurabilityUnknown {
+		outcome = Unchanged
+	}
+	return &CommitError{Outcome: outcome, cause: cause}
 }
 
 // storageError retains an OS cause for trusted callers without exposing local
 // paths through a normal Error string.
 type storageError struct{ err error }
 
-func (e *storageError) Error() string { return "configuration storage error" }
-func (e *storageError) Unwrap() error { return e.err }
+func (e *storageError) Error() string {
+	return "configuration storage error"
+}
+func (e *storageError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+func (e *storageError) Format(state fmt.State, verb rune) {
+	formatRedactedError(state, verb, e.Error())
+}
 func privateStorageError(err error) error {
 	if err == nil {
 		return nil
@@ -114,17 +133,31 @@ func (e *CommitError) Error() string {
 	// The wrapped cause can contain a filesystem path. Keep it available to
 	// callers that need to branch or log trusted diagnostics via Unwrap, but do
 	// not put it in the ordinary user-facing Error string.
-	if e.Outcome == AppliedDurabilityUnknown {
+	if e != nil && e.Outcome == AppliedDurabilityUnknown {
 		return "configuration may have been applied but its durability is unknown"
 	}
 	return "configuration was not changed"
 }
-func (e *CommitError) Unwrap() error { return e.Err }
+func (e *CommitError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+func (e *CommitError) Format(state fmt.State, verb rune) { formatRedactedError(state, verb, e.Error()) }
+
+func formatRedactedError(state fmt.State, verb rune, message string) {
+	if verb == 'q' {
+		_, _ = fmt.Fprintf(state, "%q", message)
+		return
+	}
+	_, _ = io.WriteString(state, message)
+}
 
 // OutcomeOf returns Unchanged unless an error explicitly states otherwise.
 func OutcomeOf(err error) CommitOutcome {
 	var commitErr *CommitError
-	if errors.As(err, &commitErr) {
+	if errors.As(err, &commitErr) && commitErr != nil {
 		return commitErr.Outcome
 	}
 	return Unchanged

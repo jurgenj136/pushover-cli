@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,13 +74,12 @@ func (s *FileStore) Load(ctx context.Context) (Config, error) {
 	if err := ctx.Err(); err != nil {
 		return Config{}, err
 	}
-	config, explicitSchema, err := decodeConfig(data)
+	config, err := decodeConfig(data)
 	if err != nil {
 		return Config{}, err
 	}
-	if !explicitSchema {
-		return Config{}, errors.New("schema_version is required")
-	}
+	// decodeConfig has already rejected every non-integer representation before
+	// assigning this field; do not permit yaml's integer coercions here.
 	if config.SchemaVersion < 0 {
 		return Config{}, errors.New("schema_version must not be negative")
 	}
@@ -100,34 +100,34 @@ func (s *FileStore) Load(ctx context.Context) (Config, error) {
 
 func (s *FileStore) Commit(ctx context.Context, config Config) error {
 	if err := ctx.Err(); err != nil {
-		return &CommitError{Outcome: Unchanged, Err: err}
+		return NewCommitError(Unchanged, err)
 	}
 	if err := Validate(config); err != nil {
-		return &CommitError{Outcome: Unchanged, Err: err}
+		return NewCommitError(Unchanged, err)
 	}
 	encoded, err := yaml.Marshal(config)
 	if err != nil {
-		return &CommitError{Outcome: Unchanged, Err: fmt.Errorf("encode configuration: %w", err)}
+		return NewCommitError(Unchanged, fmt.Errorf("encode configuration: %w", err))
 	}
 	parent := filepath.Dir(s.path)
 	if err := s.fs.MkdirAll(parent, 0o700); err != nil {
-		return &CommitError{Outcome: Unchanged, Err: fmt.Errorf("create configuration directory: %w", err)}
+		return NewCommitError(Unchanged, fmt.Errorf("create configuration directory: %w", err))
 	}
 	if err := s.fs.Chmod(parent, 0o700); err != nil {
-		return &CommitError{Outcome: Unchanged, Err: fmt.Errorf("restrict configuration directory: %w", err)}
+		return NewCommitError(Unchanged, fmt.Errorf("restrict configuration directory: %w", err))
 	}
 	if err := secureDirectory(parent); err != nil {
-		return &CommitError{Outcome: Unchanged, Err: err}
+		return NewCommitError(Unchanged, err)
 	}
 	temporary := filepath.Join(parent, fmt.Sprintf(".%s.%d.tmp", filepath.Base(s.path), s.clock.Now().UTC().UnixNano()))
 	file, err := s.fs.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return &CommitError{Outcome: Unchanged, Err: fmt.Errorf("create temporary configuration: %w", err)}
+		return NewCommitError(Unchanged, fmt.Errorf("create temporary configuration: %w", err))
 	}
 	failed := func(stage string, cause error) error {
 		_ = file.Close()
 		_ = s.fs.Remove(temporary)
-		return &CommitError{Outcome: Unchanged, Err: fmt.Errorf("%s: %w", stage, cause)}
+		return NewCommitError(Unchanged, fmt.Errorf("%s: %w", stage, cause))
 	}
 	if err := file.Chmod(0o600); err != nil {
 		return failed("restrict temporary configuration", err)
@@ -143,57 +143,113 @@ func (s *FileStore) Commit(ctx context.Context, config Config) error {
 	}
 	if err := file.Close(); err != nil {
 		_ = s.fs.Remove(temporary)
-		return &CommitError{Outcome: Unchanged, Err: fmt.Errorf("close temporary configuration: %w", err)}
+		return NewCommitError(Unchanged, fmt.Errorf("close temporary configuration: %w", err))
 	}
 	if err := ctx.Err(); err != nil {
 		_ = s.fs.Remove(temporary)
-		return &CommitError{Outcome: Unchanged, Err: err}
+		return NewCommitError(Unchanged, err)
 	}
 	if err := s.fs.Rename(temporary, s.path); err != nil {
 		_ = s.fs.Remove(temporary)
-		return &CommitError{Outcome: Unchanged, Err: fmt.Errorf("replace configuration: %w", err)}
+		return NewCommitError(Unchanged, fmt.Errorf("replace configuration: %w", err))
 	}
 	if err := s.fs.SyncDir(parent); err != nil {
-		return &CommitError{Outcome: AppliedDurabilityUnknown, Err: fmt.Errorf("sync configuration directory: %w", err)}
+		return NewCommitError(AppliedDurabilityUnknown, fmt.Errorf("sync configuration directory: %w", err))
 	}
 	return nil
 }
 
-func decodeConfig(data []byte) (Config, bool, error) {
+func decodeConfig(data []byte) (Config, error) {
+	node, err := decodeSingleDocument(data)
+	if err != nil {
+		return Config{}, err
+	}
+	version, err := strictSchemaVersion(node)
+	if err != nil {
+		return Config{}, err
+	}
 	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
 	decoder.KnownFields(true)
 	var config Config
 	if err := decoder.Decode(&config); err != nil {
-		return Config{}, false, fmt.Errorf("decode configuration: %w", err)
+		return Config{}, fmt.Errorf("decode configuration: %w", err)
+	}
+	config.SchemaVersion = version
+	return config, nil
+}
+
+// decodeSingleDocument runs before decoding into Config so schema version is
+// never subject to yaml's permissive numeric conversion rules.
+func decodeSingleDocument(data []byte) (*yaml.Node, error) {
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	var node yaml.Node
+	if err := decoder.Decode(&node); err != nil {
+		return nil, fmt.Errorf("decode configuration: %w", err)
 	}
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return Config{}, false, errors.New("configuration must contain exactly one document")
+			return nil, errors.New("configuration must contain exactly one document")
 		}
-		return Config{}, false, fmt.Errorf("decode configuration: %w", err)
+		return nil, fmt.Errorf("decode configuration: %w", err)
 	}
-	var node yaml.Node
-	if err := yaml.Unmarshal(data, &node); err != nil {
-		return Config{}, false, fmt.Errorf("decode configuration: %w", err)
-	}
-	return config, containsSchemaVersion(&node), nil
+	return &node, nil
 }
 
-func containsSchemaVersion(node *yaml.Node) bool {
+func strictSchemaVersion(node *yaml.Node) (int, error) {
 	if len(node.Content) == 0 {
-		return false
+		return 0, errors.New("schema_version is required")
 	}
 	node = node.Content[0]
 	if node.Kind != yaml.MappingNode {
-		return false
+		return 0, errors.New("configuration must be a mapping")
 	}
+	var raw *yaml.Node
 	for index := 0; index < len(node.Content); index += 2 {
 		if node.Content[index].Value == "schema_version" {
-			return true
+			if raw != nil {
+				return 0, errors.New("schema_version must appear exactly once")
+			}
+			raw = node.Content[index+1]
 		}
 	}
-	return false
+	if raw == nil {
+		return 0, errors.New("schema_version is required")
+	}
+	if raw.Kind != yaml.ScalarNode || raw.Tag != "!!int" || !isBase10Integer(raw.Value) {
+		return 0, errors.New("schema_version must be a base-10 integer")
+	}
+	value, err := strconv.ParseInt(raw.Value, 10, 0)
+	if err != nil {
+		return 0, errors.New("schema_version is out of range")
+	}
+	return int(value), nil
+}
+
+func isBase10Integer(value string) bool {
+	if value == "" {
+		return false
+	}
+	negative := false
+	if value[0] == '-' {
+		negative = true
+		value = value[1:]
+		if value == "" {
+			return false
+		}
+	}
+	if value == "0" {
+		return !negative
+	}
+	if value[0] == '0' {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func readBounded(file File, maximum int64) ([]byte, error) {
