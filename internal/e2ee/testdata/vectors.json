@@ -1,0 +1,9 @@
+[
+  {
+    "name": "pushover-api-example-plaintext",
+    "key": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    "iv": "000102030405060708090a0b0c0d0e0f",
+    "plaintext": "This has been encrypted",
+    "envelope": "AAECAwQFBgcICQoLDA0ODxp8+AImNhKqB8XJHQ7KgmHtOLS5OO41YvUpTp74x8dAL0ISu8/oTuygFVzOYBHaVyClwr7F+tGKc4hcclvFsS7nkcQNiftMdIdmE8hmk/N/"
+  }
+]
