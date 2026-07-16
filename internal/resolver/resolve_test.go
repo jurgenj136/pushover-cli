@@ -100,6 +100,24 @@ func TestResolveEncryptedBatchWithLaterBadKeyReturnsZeroDraft(t *testing.T) {
 		t.Fatalf("draft=%#v err=%v", draft, err)
 	}
 }
+func TestResolveEncryptedBatchWithLaterPayloadFailureReturnsZeroDraft(t *testing.T) {
+	token, user, key := strings.Repeat("a", 30), strings.Repeat("b", 30), strings.Repeat("c", 64)
+	store := &resolverSecrets{values: map[domain.SecretRef][]byte{"token": []byte(token), "one": []byte(user), "two": []byte(user), "key": []byte(key)}}
+	configuration := config.Config{SchemaVersion: 1, Backend: config.Backend{Type: "native"}, DefaultProfile: "p", Profiles: map[string]config.Profile{"p": {Name: "p", TokenRef: "token", Defaults: config.MessageDefaults{Devices: []string{"device"}}}}, Recipients: map[string]config.Recipient{"one": {Alias: "one", UserKeyRef: "one", E2EEKeyRef: "key", Kind: domain.KindUser}, "two": {Alias: "two", UserKeyRef: "two", E2EEKeyRef: "key", Kind: domain.KindGroup}}}
+	draft, err := (&Resolver{Config: resolverConfig{value: configuration}, Secrets: store}).Resolve(context.Background(), Input{To: []string{"one", "two"}, Message: domain.Message{Encrypted: true}, Body: BodySource{Kind: BodyPositional, Value: "x"}})
+	if err == nil || len(draft.Targets) != 0 {
+		t.Fatalf("draft=%#v err=%v", draft, err)
+	}
+}
+
+func TestWipePayloadKeys(t *testing.T) {
+	first, second := []byte("first"), []byte("second")
+	payloads := []domain.TargetPayload{{Target: domain.Target{E2EEKey: first}}, {Target: domain.Target{E2EEKey: second}}}
+	wipePayloadKeys(payloads)
+	if string(first) != "\x00\x00\x00\x00\x00" || string(second) != "\x00\x00\x00\x00\x00\x00" {
+		t.Fatalf("keys not wiped: %v %v", first, second)
+	}
+}
 func TestContextConflictsAreRejectedBeforeReadingBody(t *testing.T) {
 	reader := &countReader{}
 	_, err := (&Resolver{}).Resolve(context.Background(), Input{Credentials: strings.NewReader(`{}`), Body: BodySource{Kind: BodyStdin, Reader: reader}})

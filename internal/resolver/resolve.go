@@ -36,6 +36,7 @@ func (r *Resolver) Resolve(ctx context.Context, input Input) (domain.ResolvedSen
 		if err != nil {
 			return domain.ResolvedSendDraft{}, err
 		}
+		defer wipe(credentials.E2EEKey)
 		return r.resolveSupplied(input, body, credentials)
 	}
 	return r.resolveConfigured(ctx, input, body)
@@ -143,6 +144,8 @@ func (r *Resolver) resolveConfigured(ctx context.Context, input Input, body stri
 		wipe(value.userKey)
 		wipe(value.e2ee)
 		if err := domain.ValidateTargetPayload(payload); err != nil {
+			wipePayloadKeys(targets)
+			wipe(payload.Target.E2EEKey)
 			cleanup()
 			return domain.ResolvedSendDraft{}, apperror.New("message_invalid", apperror.CategoryValidation, "message configuration is invalid")
 		}
@@ -205,6 +208,7 @@ func readBody(source BodySource) (string, error) {
 		return "", apperror.New("body_source_invalid", apperror.CategoryUsage, "exactly one message body source is required")
 	}
 	data, err := readBoundedBody(io.LimitReader(reader, MaxBodyBytes+1))
+	defer wipe(data)
 	if close != nil {
 		if closeErr := close(); err == nil {
 			err = closeErr
@@ -265,5 +269,11 @@ func (r *stringReader) Read(p []byte) (int, error) {
 func wipe(value []byte) {
 	for index := range value {
 		value[index] = 0
+	}
+}
+
+func wipePayloadKeys(payloads []domain.TargetPayload) {
+	for index := range payloads {
+		wipe(payloads[index].Target.E2EEKey)
 	}
 }
