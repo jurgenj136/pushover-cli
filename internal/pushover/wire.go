@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"mime/multipart"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -70,7 +71,15 @@ func encodedPayload(payload domain.TargetPayload) (io.Reader, string, error) {
 			}
 		}
 	}
-	part, err := writer.CreateFormFile("attachment", "attachment")
+	contentType, err := attachmentContentType(payload.Message.Attachment.MediaType)
+	if err != nil {
+		return nil, "", err
+	}
+	header := make(textproto.MIMEHeader)
+	// Both parameters are static: attachment names never reach the wire.
+	header.Set("Content-Disposition", `form-data; name="attachment"; filename="attachment"`)
+	header.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(header)
 	if err != nil {
 		return nil, "", err
 	}

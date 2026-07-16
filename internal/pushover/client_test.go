@@ -3,8 +3,11 @@ package pushover
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -83,8 +86,34 @@ func TestSendUsesGenericMultipartAttachmentName(t *testing.T) {
 	if !strings.HasPrefix(contentType, "multipart/form-data;") {
 		t.Fatalf("content type = %q", contentType)
 	}
-	if !bytes.Contains(body, []byte(`filename="attachment"`)) || bytes.Contains(body, []byte("private-image")) {
+	if bytes.Contains(body, []byte("private-image")) {
 		t.Fatalf("attachment filename was not generic: %q", body)
+	}
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	foundAttachment := false
+	for {
+		part, partErr := reader.NextPart()
+		if partErr == io.EOF {
+			break
+		}
+		if partErr != nil {
+			t.Fatal(partErr)
+		}
+		if part.FormName() != "attachment" {
+			continue
+		}
+		foundAttachment = true
+		if part.FileName() != "attachment" || part.Header.Get("Content-Type") != "image/png" {
+			t.Fatalf("attachment headers = %v", part.Header)
+		}
+		break
+	}
+	if !foundAttachment {
+		t.Fatal("multipart body omitted attachment")
 	}
 }
 
@@ -99,11 +128,12 @@ func TestSendEncryptedWireIncludesOnlyExplicitEncryptedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := domain.TargetPayload{Target: domain.Target{Credentials: domain.Credentials{Token: testToken, UserKey: testUser}}, Message: domain.Message{Body: "YQ==", Title: "Yg==", URL: "Yw==", URLTitle: "ZA==", Encrypted: true}}
+	envelope := validEnvelope()
+	payload := domain.TargetPayload{Target: domain.Target{Credentials: domain.Credentials{Token: testToken, UserKey: testUser}}, Message: domain.Message{Body: envelope, Title: envelope, URL: envelope, URLTitle: envelope, Encrypted: true}}
 	if _, err := client.Send(context.Background(), payload); err != nil {
 		t.Fatal(err)
 	}
-	for key, want := range map[string]string{"message": "YQ==", "title": "Yg==", "url": "Yw==", "url_title": "ZA==", "encrypted": "1", "priority": "0"} {
+	for key, want := range map[string]string{"message": envelope, "title": envelope, "url": envelope, "url_title": envelope, "encrypted": "1", "priority": "0"} {
 		if got.Get(key) != want {
 			t.Errorf("%s = %q, want %q", key, got.Get(key), want)
 		}
@@ -174,6 +204,34 @@ func TestSendRejectsOversizedResponseAsAmbiguousDecode(t *testing.T) {
 		t.Fatalf("send error = %#v", err)
 	}
 }
+
+func TestSendRejectsMalformedEncryptedPayloadBeforeNetwork(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		message domain.Message
+		kind    domain.TargetKind
+	}{
+		{"malformed envelope", domain.Message{Body: "YQ==", Encrypted: true}, domain.KindUser},
+		{"url title without URL", domain.Message{Body: validEnvelope(), URLTitle: validEnvelope(), Encrypted: true}, domain.KindUser},
+		{"invalid emergency", domain.Message{Body: validEnvelope(), Encrypted: true, Priority: domain.PriorityEmergency}, domain.KindUser},
+		{"group device", domain.Message{Body: validEnvelope(), Encrypted: true, Devices: []string{"phone"}}, domain.KindGroup},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &scriptedRoundTripper{fn: func(*http.Request, int) (*http.Response, error) {
+				t.Fatal("network call for invalid encrypted payload")
+				return nil, nil
+			}}
+			client, _ := NewTestClient("https://test.invalid", &http.Client{Transport: transport}, nil)
+			_, err := client.Send(context.Background(), domain.TargetPayload{Target: domain.Target{Kind: test.kind, Credentials: domain.Credentials{Token: testToken, UserKey: testUser}}, Message: test.message})
+			var send *SendError
+			if !errors.As(err, &send) || !send.TransmissionPossible || send.Phase != PhaseBeforeDial || transport.calls != 0 {
+				t.Fatalf("send error = %#v calls=%d", err, transport.calls)
+			}
+		})
+	}
+}
+
+func validEnvelope() string { return base64.StdEncoding.EncodeToString(make([]byte, 64)) }
 
 func newTLSServer(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()

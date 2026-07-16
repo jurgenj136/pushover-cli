@@ -35,7 +35,10 @@ func (e *SendError) Unwrap() error {
 	}
 	return e.Cause
 }
-func (e *SendError) Format(state fmt.State, verb rune) { _, _ = io.WriteString(state, e.Error()) }
+
+// Format has a value receiver so both SendError values and pointers use the
+// redacted rendering. The exported Cause must never be exposed by %#v.
+func (e SendError) Format(state fmt.State, verb rune) { _, _ = io.WriteString(state, e.Error()) }
 
 func newSendError(cause error, phase TransmissionPhase, possible bool) *SendError {
 	return &SendError{Cause: cause, Phase: phase, TransmissionPossible: possible}
