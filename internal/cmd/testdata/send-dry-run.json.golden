@@ -1,0 +1,1 @@
+{"schema_version":1,"command":"send","status":"dry_run","result":{"dry_run":true,"targets":[{"alias":"alice","outcome":"planned","priority":0,"request_id":null,"receipt_id":null,"quota_remaining":null,"error":null}],"counts":{"planned":1,"sent":0,"failed":0,"ambiguous":0,"skipped":0}}}

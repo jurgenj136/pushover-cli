@@ -1,0 +1,103 @@
+package cmd
+
+import (
+	"context"
+	"os"
+
+	"github.com/jurgenj136/pushover-cli/internal/apperror"
+	"github.com/jurgenj136/pushover-cli/internal/attachment"
+	"github.com/jurgenj136/pushover-cli/internal/config"
+	"github.com/jurgenj136/pushover-cli/internal/delivery"
+	"github.com/jurgenj136/pushover-cli/internal/e2ee"
+	"github.com/jurgenj136/pushover-cli/internal/operation"
+	"github.com/jurgenj136/pushover-cli/internal/output"
+	"github.com/jurgenj136/pushover-cli/internal/preflight"
+	"github.com/jurgenj136/pushover-cli/internal/pushover"
+	"github.com/jurgenj136/pushover-cli/internal/resolver"
+	"github.com/jurgenj136/pushover-cli/internal/secrets"
+)
+
+// Dependencies are the command's runtime graph. Tests may inject concrete
+// preflight and delivery implementations; production construction remains
+// intentionally lazy for help and completion.
+type Dependencies struct {
+	Preflight  *preflight.Builder
+	Delivery   *delivery.Runner
+	Output     output.Factory
+	Operations operation.Factory
+	Signals    <-chan os.Signal
+
+	// runtime and lookupEnv deliberately remain package-private. They allow
+	// production construction to be genuinely lazy and keep tests hermetic
+	// without changing the public dependency contract.
+	runtime   runtimeFactory
+	lookupEnv func(string) (string, bool)
+}
+
+type runtimeFactory func(context.Context, operation.Scope) (preflight.Builder, delivery.Runner, error)
+
+// NewProductionDependencies creates only inert factories. In particular it
+// does not resolve paths, load configuration, open a secret store, or create a
+// transport. Those effects are reserved for a parsed and structurally valid
+// command that actually needs to send.
+func NewProductionDependencies(_ context.Context, _ IO) (Dependencies, error) {
+	return Dependencies{
+		Output:     output.NewFactory(),
+		Operations: operation.Factory{},
+		runtime:    productionRuntime,
+		lookupEnv:  os.LookupEnv,
+	}, nil
+}
+
+func (d Dependencies) openRuntime(ctx context.Context, scope operation.Scope) (preflight.Builder, delivery.Runner, error) {
+	if d.Preflight != nil || d.Delivery != nil {
+		var builder preflight.Builder
+		var runner delivery.Runner
+		if d.Preflight != nil {
+			builder = *d.Preflight
+		}
+		if d.Delivery != nil {
+			runner = *d.Delivery
+		}
+		return builder, runner, nil
+	}
+	if d.runtime == nil {
+		return preflight.Builder{}, delivery.Runner{}, nil
+	}
+	return d.runtime(ctx, scope)
+}
+
+func (d Dependencies) environment(name string) (string, bool) {
+	if d.lookupEnv != nil {
+		return d.lookupEnv(name)
+	}
+	return os.LookupEnv(name)
+}
+
+func productionRuntime(ctx context.Context, scope operation.Scope) (preflight.Builder, delivery.Runner, error) {
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		return preflight.Builder{}, delivery.Runner{}, apperror.Wrap("configuration_unavailable", apperror.CategoryConfig, "configuration is unavailable", err)
+	}
+	configuration := config.NewFileStore(paths.ConfigFile)
+	value, err := configuration.Load(ctx)
+	if err != nil {
+		return preflight.Builder{}, delivery.Runner{}, apperror.Wrap("configuration_unavailable", apperror.CategoryConfig, "configuration is unavailable", err)
+	}
+	store, err := (secrets.DefaultFactory{
+		File: secrets.AgeFactory{DataDir: paths.AgeDataDir, AllowIdentity: true},
+	}).Open(ctx, value.Backend)
+	if err != nil {
+		return preflight.Builder{}, delivery.Runner{}, err
+	}
+	client := pushover.NewClient(nil)
+	builder := preflight.Builder{
+		Resolver:    &resolver.Resolver{Config: configuration, Secrets: store},
+		Attachments: attachment.RemoteLoader{Scope: scope},
+		Validator:   client,
+		Encryptor:   e2ee.Encryptor{},
+		Scope:       scope,
+	}
+	runner := delivery.Runner{Client: client, Scope: scope}
+	return builder, runner, nil
+}
