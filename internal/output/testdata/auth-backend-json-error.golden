@@ -1,0 +1,1 @@
+{"schema_version":1,"command":"auth backend","status":"error","error":{"code":"example","category":"usage","message":"invalid command","retryable":false,"ambiguous":false}}

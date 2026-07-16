@@ -1,0 +1,1 @@
+{"schema_version":1,"command":"auth status","status":"success","result":{"profile":"default","backend":"native","configured":true,"token_resolves":true}}

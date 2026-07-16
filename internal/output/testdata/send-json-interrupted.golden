@@ -1,0 +1,1 @@
+{"schema_version":1,"command":"send","status":"interrupted","result":{"dry_run":false,"targets":[{"alias":"ops","outcome":"skipped","priority":0,"request_id":null,"receipt_id":null,"quota_remaining":null,"error":null}],"counts":{"planned":0,"sent":0,"failed":0,"ambiguous":0,"skipped":1}}}

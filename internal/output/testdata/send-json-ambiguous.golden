@@ -1,0 +1,1 @@
+{"schema_version":1,"command":"send","status":"ambiguous","result":{"dry_run":false,"targets":[{"alias":"ops","outcome":"ambiguous","priority":0,"request_id":null,"receipt_id":null,"quota_remaining":null,"error":{"code":"timeout","category":"network","message":"unknown","retryable":false,"ambiguous":true}}],"counts":{"planned":0,"sent":0,"failed":0,"ambiguous":1,"skipped":0}}}

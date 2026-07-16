@@ -1,0 +1,1 @@
+{"schema_version":1,"command":"limits","status":"success","result":{"limit":10000,"remaining":9999,"reset_unix":1700000000}}

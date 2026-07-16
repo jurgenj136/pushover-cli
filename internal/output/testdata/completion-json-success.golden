@@ -1,0 +1,1 @@
+{"schema_version":1,"command":"completion","status":"success","result":{"shell":"bash","script":"complete -W 'send info' pushover\n"}}

@@ -1,0 +1,1 @@
+{"schema_version":1,"command":"recipients validate","status":"success","result":{"rows":[{"alias":"ops","valid":true,"devices":[],"licenses":[],"error_code":""}]}}

@@ -1,0 +1,1 @@
+{"schema_version":1,"command":"recipients list","status":"success","result":{"rows":[{"alias":"ops","kind":"user","validated":true,"devices":["phone"]}]}}
