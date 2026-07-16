@@ -1,0 +1,29 @@
+# Build output
+/bin/
+/dist/
+/pushover
+*.exe
+*.test
+*.out
+
+# Coverage and profiling
+coverage.*
+*.prof
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local planning and agent instructions
+/.workflow/
+/docs/
+/AGENTS.md
+/CLAUDE.md
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
