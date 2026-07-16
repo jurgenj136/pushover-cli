@@ -16,8 +16,6 @@ coverage.*
 !.env.example
 /.secrets/
 /.scratch/
-*.secret
-*.credentials
 
 # Local planning and agent instructions
 /.workflow/
