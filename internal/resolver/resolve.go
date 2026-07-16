@@ -71,6 +71,7 @@ func (r *Resolver) resolveSupplied(input Input, body string, supplied suppliedCr
 	}
 	payload := domain.TargetPayload{Target: target, Message: message}
 	if err := domain.ValidateTargetPayload(payload); err != nil {
+		wipe(payload.Target.E2EEKey)
 		return domain.ResolvedSendDraft{}, apperror.New("message_invalid", apperror.CategoryValidation, "message configuration is invalid")
 	}
 	return domain.ResolvedSendDraft{Command: "send", Targets: []domain.TargetPayload{payload}}, nil
