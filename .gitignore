@@ -20,6 +20,8 @@ coverage.*
 /docs/
 /AGENTS.md
 /CLAUDE.md
+/.superpowers/
+/.worktrees/
 
 # Editors and operating systems
 .DS_Store
