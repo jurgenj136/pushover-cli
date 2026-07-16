@@ -1,0 +1,36 @@
+{
+  "retrieved_at": "2026-07-16",
+  "sources": [
+    "https://pushover.net/api",
+    "https://pushover.net/api#messages",
+    "https://pushover.net/api#limits",
+    "https://pushover.net/api/receipts"
+  ],
+  "identifiers": {
+    "length": 30,
+    "alphabet": "ASCII alphanumeric"
+  },
+  "fields": {
+    "message_max_runes": 1024,
+    "title_max_runes": 250,
+    "url_max_runes": 512,
+    "url_title_max_runes": 100,
+    "device_max_runes": 25
+  },
+  "priority": {
+    "minimum": -2,
+    "maximum": 2,
+    "emergency_retry_min_seconds": 30,
+    "emergency_expire_max_seconds": 10800,
+    "emergency_delivery_cap": 50
+  },
+  "attachment": {
+    "max_bytes": 5242880
+  },
+  "quota_headers": {
+    "limit": "X-Limit-App-Limit",
+    "remaining": "X-Limit-App-Remaining",
+    "reset": "X-Limit-App-Reset"
+  },
+  "e2ee_fields": ["message", "title", "url", "url_title"]
+}
