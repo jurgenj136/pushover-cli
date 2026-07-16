@@ -54,7 +54,7 @@ func (r PlainRenderer) Result(w io.Writer, result CommandResult) error {
 	case BackendResult:
 		rows = append(rows, joinTSV(v.Backend))
 	case InfoResult:
-		rows = append(rows, joinTSV(v.ConfigPath, v.Profile, v.Backend, v.Version, v.Commit, v.BuildDate))
+		rows = append(rows, joinTSVEscaped([]string{v.ConfigPath, v.Profile, v.Backend, v.Version, v.Commit, v.BuildDate, tsvList(v.Features)}, 6))
 	case VersionResult:
 		rows = append(rows, joinTSV(v.Version, v.Commit, v.BuildDate))
 	default:

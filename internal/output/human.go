@@ -120,7 +120,7 @@ func humanRows(result CommandResult) []string {
 	case BackendResult:
 		rows = []string{safeHuman(v.Backend)}
 	case InfoResult:
-		rows = []string{fmt.Sprintf("config_path=%s profile=%s backend=%s version=%s commit=%s build_date=%s", safeHuman(v.ConfigPath), safeHuman(v.Profile), safeHuman(v.Backend), safeHuman(v.Version), safeHuman(v.Commit), safeHuman(v.BuildDate))}
+		rows = []string{fmt.Sprintf("config_path=%s profile=%s backend=%s version=%s commit=%s build_date=%s features=%s", safeHuman(v.ConfigPath), safeHuman(v.Profile), safeHuman(v.Backend), safeHuman(v.Version), safeHuman(v.Commit), safeHuman(v.BuildDate), safeHuman(strings.Join(v.Features, ",")))}
 	case VersionResult:
 		rows = []string{fmt.Sprintf("version=%s commit=%s build_date=%s", safeHuman(v.Version), safeHuman(v.Commit), safeHuman(v.BuildDate))}
 	case MutationResult:

@@ -81,7 +81,7 @@ func TestJSONAllResultTypesAndArrays(t *testing.T) {
 		ProfilesResult{Meta: Meta{"profiles list", "success"}}, RecipientsResult{Meta: Meta{"recipients list", "success"}},
 		ValidationsResult{Meta: Meta{"recipients validate", "success"}}, SoundsResult{Meta: Meta{"sounds", "success"}},
 		LimitsResult{Meta: Meta{"limits", "success"}}, AuthStatusResult{Meta: Meta{"auth status", "success"}},
-		BackendResult{Meta: Meta{"auth backend", "success"}}, InfoResult{Meta: Meta{"info", "success"}},
+		BackendResult{Meta: Meta{"auth backend", "success"}}, InfoResult{Meta: Meta{"info", "success"}, Features: []string{"age-file"}},
 		VersionResult{Meta: Meta{"version", "success"}}, MutationResult{Meta: Meta{"profiles add", "success"}}, CompletionResult{Meta: Meta{"completion", "success"}},
 	}
 	for _, result := range results {
@@ -92,6 +92,66 @@ func TestJSONAllResultTypesAndArrays(t *testing.T) {
 		if strings.Contains(out.String(), `"rows":null`) || strings.Contains(out.String(), `"warnings":null`) {
 			t.Fatalf("nil array in %s: %s", result.CommandName(), out.String())
 		}
+	}
+}
+
+func TestInfoFeaturesAreStableAcrossRenderers(t *testing.T) {
+	// Features are intentionally strict output data: non-empty lowercase
+	// identifiers, sorted lexicographically, and unique. This keeps all three
+	// formats deterministic and makes the TSV comma-list unambiguous.
+	result := InfoResult{
+		Meta:       Meta{"info", "success"},
+		ConfigPath: "/config/pushover.yaml",
+		Profile:    "default",
+		Backend:    "native",
+		Version:    "1.0.0",
+		Commit:     "abc",
+		BuildDate:  "2026-07-17",
+		Features:   []string{"age-file", "e2ee", "native-secrets"},
+	}
+	var jsonOut bytes.Buffer
+	if err := (JSONRenderer{}).Result(&jsonOut, result); err != nil {
+		t.Fatal(err)
+	}
+	if got := jsonOut.String(); !strings.Contains(got, `"features":["age-file","e2ee","native-secrets"]`) {
+		t.Fatalf("JSON features missing or unstable: %q", got)
+	}
+	var humanOut bytes.Buffer
+	if err := (HumanRenderer{}).Result(&humanOut, result); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := humanOut.String(), "config_path=/config/pushover.yaml profile=default backend=native version=1.0.0 commit=abc build_date=2026-07-17 features=age-file,e2ee,native-secrets\n"; got != want {
+		t.Fatalf("human info = %q, want %q", got, want)
+	}
+	var plainOut bytes.Buffer
+	if err := (PlainRenderer{}).Result(&plainOut, result); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := plainOut.String(), "/config/pushover.yaml\tdefault\tnative\t1.0.0\tabc\t2026-07-17\tage-file,e2ee,native-secrets\n"; got != want {
+		t.Fatalf("plain info = %q, want %q", got, want)
+	}
+}
+
+func TestInfoFeaturesRejectInvalidValues(t *testing.T) {
+	base := InfoResult{Meta: Meta{"info", "success"}, Features: []string{"age-file", "e2ee"}}
+	cases := map[string][]string{
+		"nil":       nil,
+		"empty":     {},
+		"uppercase": {"Age-file"},
+		"control":   {"age\nfile"},
+		"duplicate": {"age-file", "age-file"},
+		"unsorted":  {"e2ee", "age-file"},
+		"comma":     {"age,file"},
+	}
+	for name, features := range cases {
+		t.Run(name, func(t *testing.T) {
+			result := base
+			result.Features = features
+			var out bytes.Buffer
+			if err := (JSONRenderer{}).Result(&out, result); err == nil || out.Len() != 0 {
+				t.Fatalf("expected invalid features to be rejected without output: err=%v output=%q", err, out.String())
+			}
+		})
 	}
 }
 
@@ -128,7 +188,7 @@ func TestHumanCompletionAndColorSafety(t *testing.T) {
 func TestPlainEligibility(t *testing.T) {
 	eligible := []CommandResult{
 		SendResult{Meta: Meta{"send", "dry_run"}, Batch: domain.BatchResult{Command: "send", DryRun: true, Results: []domain.TargetResult{{Alias: "a", Outcome: domain.Planned}}}},
-		ProfilesResult{Meta: Meta{"profiles list", "success"}}, ProfilesResult{Meta: Meta{"profiles show", "success"}}, RecipientsResult{Meta: Meta{"recipients list", "success"}}, RecipientsResult{Meta: Meta{"recipients show", "success"}}, ValidationsResult{Meta: Meta{"recipients validate", "success"}}, SoundsResult{Meta: Meta{"sounds", "success"}}, LimitsResult{Meta: Meta{"limits", "success"}}, AuthStatusResult{Meta: Meta{"auth status", "success"}}, BackendResult{Meta: Meta{"auth backend", "success"}}, InfoResult{Meta: Meta{"info", "success"}}, VersionResult{Meta: Meta{"version", "success"}},
+		ProfilesResult{Meta: Meta{"profiles list", "success"}}, ProfilesResult{Meta: Meta{"profiles show", "success"}}, RecipientsResult{Meta: Meta{"recipients list", "success"}}, RecipientsResult{Meta: Meta{"recipients show", "success"}}, ValidationsResult{Meta: Meta{"recipients validate", "success"}}, SoundsResult{Meta: Meta{"sounds", "success"}}, LimitsResult{Meta: Meta{"limits", "success"}}, AuthStatusResult{Meta: Meta{"auth status", "success"}}, BackendResult{Meta: Meta{"auth backend", "success"}}, InfoResult{Meta: Meta{"info", "success"}, Features: []string{"age-file"}}, VersionResult{Meta: Meta{"version", "success"}},
 	}
 	for _, result := range eligible {
 		var out bytes.Buffer

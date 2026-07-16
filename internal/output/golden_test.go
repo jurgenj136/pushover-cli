@@ -26,7 +26,7 @@ func TestGolden(t *testing.T) {
 		LimitsResult{Meta: Meta{"limits", "success"}, Limit: 10000, Remaining: 9999, Reset: 1700000000},
 		AuthStatusResult{Meta: Meta{"auth status", "success"}, Profile: "default", Backend: "native", Configured: true, TokenResolves: true},
 		BackendResult{Meta: Meta{"auth backend", "success"}, Backend: "native"},
-		InfoResult{Meta: Meta{"info", "success"}, ConfigPath: "/config/pushover.yaml", Profile: "default", Backend: "native", Version: "1.0.0", Commit: "abc", BuildDate: "2026-07-17"},
+		InfoResult{Meta: Meta{"info", "success"}, ConfigPath: "/config/pushover.yaml", Profile: "default", Backend: "native", Version: "1.0.0", Commit: "abc", BuildDate: "2026-07-17", Features: []string{"age-file", "e2ee", "native-secrets"}},
 		VersionResult{Meta: Meta{"version", "success"}, Version: "1.0.0", Commit: "abc", BuildDate: "2026-07-17"},
 		MutationResult{Meta: Meta{"profiles add", "success"}, Resource: "profile", Name: "default", Action: "added", Warnings: []string{}},
 		CompletionResult{Meta: Meta{"completion", "success"}, Shell: "bash", Script: "complete -W 'send info' pushover\n"},
@@ -46,7 +46,7 @@ func TestGolden(t *testing.T) {
 		LimitsResult{Meta: Meta{"limits", "success"}, Limit: 10000, Remaining: 9999, Reset: 1700000000},
 		AuthStatusResult{Meta: Meta{"auth status", "success"}, Profile: "default", Backend: "native", Configured: true, TokenResolves: true},
 		BackendResult{Meta: Meta{"auth backend", "success"}, Backend: "native"},
-		InfoResult{Meta: Meta{"info", "success"}, ConfigPath: "/config/pushover.yaml", Profile: "default", Backend: "native", Version: "1.0.0", Commit: "abc", BuildDate: "2026-07-17"},
+		InfoResult{Meta: Meta{"info", "success"}, ConfigPath: "/config/pushover.yaml", Profile: "default", Backend: "native", Version: "1.0.0", Commit: "abc", BuildDate: "2026-07-17", Features: []string{"age-file", "e2ee", "native-secrets"}},
 		VersionResult{Meta: Meta{"version", "success"}, Version: "1.0.0", Commit: "abc", BuildDate: "2026-07-17"},
 	}
 	for _, result := range plainResults {
@@ -57,6 +57,7 @@ func TestGolden(t *testing.T) {
 	goldenPlainUnsupported(t, "profiles-add-plain-unsupported", MutationResult{Meta: Meta{"profiles add", "success"}})
 	goldenPlainUnsupported(t, "completion-plain-unsupported", CompletionResult{Meta: Meta{"completion", "success"}})
 	goldenHuman(t, CompletionResult{Meta: Meta{"completion", "success"}, Shell: "bash", Script: "complete\n"}, "completion-human")
+	goldenHuman(t, InfoResult{Meta: Meta{"info", "success"}, ConfigPath: "/config/pushover.yaml", Profile: "default", Backend: "native", Version: "1.0.0", Commit: "abc", BuildDate: "2026-07-17", Features: []string{"age-file", "e2ee", "native-secrets"}}, "info-human")
 	goldenHuman(t, SendResult{Meta: Meta{"send", "success"}, Batch: domain.BatchResult{Command: "send", Results: []domain.TargetResult{{Alias: "ops", Outcome: domain.Sent, Priority: 0}}}}, "send-human-color")
 	hostile := SendResult{Meta: Meta{"send", "success"}, Batch: domain.BatchResult{Command: "send", Results: []domain.TargetResult{{Alias: "ops\x1b[31m\nrow", Outcome: domain.Sent, Priority: 0}}}}
 	goldenHumanOptions(t, hostile, "send-human-color-off-controls", RenderOptions{Color: false, TTY: true})

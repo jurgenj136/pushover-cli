@@ -107,7 +107,50 @@ func validateResult(result CommandResult) error {
 	if !knownPairing(command, result) {
 		return usage("output_command_mismatch", fmt.Sprintf("result type does not match command %q", command))
 	}
+	if info, ok := result.(InfoResult); ok {
+		if err := validateInfoFeatures(info.Features); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func validateInfoFeatures(features []string) error {
+	if len(features) == 0 {
+		return usage("output_features_missing", "info result must include supported features")
+	}
+	for i, feature := range features {
+		if !safeFeatureIdentifier(feature) {
+			return usage("output_feature_invalid", "info feature must be a lowercase identifier")
+		}
+		if i == 0 {
+			continue
+		}
+		if feature == features[i-1] {
+			return usage("output_features_duplicate", "info features must be unique")
+		}
+		if feature < features[i-1] {
+			return usage("output_features_unsorted", "info features must be sorted")
+		}
+	}
+	return nil
+}
+
+func safeFeatureIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	first := value[0]
+	if (first < 'a' || first > 'z') && (first < '0' || first > '9') {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		c := value[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func validateTargetResult(target domain.TargetResult) error {

@@ -85,6 +85,7 @@ type BackendResult struct {
 type InfoResult struct {
 	Meta
 	ConfigPath, Profile, Backend, Version, Commit, BuildDate string
+	Features                                                 []string
 }
 type VersionResult struct {
 	Meta

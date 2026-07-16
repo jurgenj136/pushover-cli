@@ -151,13 +151,14 @@ func jsonPayload(result CommandResult) any {
 		}{safeHuman(v.Backend)}
 	case InfoResult:
 		return struct {
-			ConfigPath string `json:"config_path"`
-			Profile    string `json:"profile"`
-			Backend    string `json:"backend"`
-			Version    string `json:"version"`
-			Commit     string `json:"commit"`
-			BuildDate  string `json:"build_date"`
-		}{safeHuman(v.ConfigPath), safeHuman(v.Profile), safeHuman(v.Backend), safeHuman(v.Version), safeHuman(v.Commit), safeHuman(v.BuildDate)}
+			ConfigPath string   `json:"config_path"`
+			Profile    string   `json:"profile"`
+			Backend    string   `json:"backend"`
+			Version    string   `json:"version"`
+			Commit     string   `json:"commit"`
+			BuildDate  string   `json:"build_date"`
+			Features   []string `json:"features"`
+		}{safeHuman(v.ConfigPath), safeHuman(v.Profile), safeHuman(v.Backend), safeHuman(v.Version), safeHuman(v.Commit), safeHuman(v.BuildDate), safeStrings(v.Features)}
 	case VersionResult:
 		return struct {
 			Version   string `json:"version"`
