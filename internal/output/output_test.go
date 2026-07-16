@@ -128,7 +128,7 @@ func TestHumanCompletionAndColorSafety(t *testing.T) {
 func TestPlainEligibility(t *testing.T) {
 	eligible := []CommandResult{
 		SendResult{Meta: Meta{"send", "dry_run"}, Batch: domain.BatchResult{Command: "send", DryRun: true, Results: []domain.TargetResult{{Alias: "a", Outcome: domain.Planned}}}},
-		ProfilesResult{Meta: Meta{"profiles show", "success"}}, RecipientsResult{Meta: Meta{"recipients list", "success"}}, ValidationsResult{Meta: Meta{"recipients validate", "success"}}, SoundsResult{Meta: Meta{"sounds", "success"}}, LimitsResult{Meta: Meta{"limits", "success"}}, AuthStatusResult{Meta: Meta{"auth status", "success"}}, BackendResult{Meta: Meta{"auth backend", "success"}}, InfoResult{Meta: Meta{"info", "success"}}, VersionResult{Meta: Meta{"version", "success"}},
+		ProfilesResult{Meta: Meta{"profiles list", "success"}}, ProfilesResult{Meta: Meta{"profiles show", "success"}}, RecipientsResult{Meta: Meta{"recipients list", "success"}}, RecipientsResult{Meta: Meta{"recipients show", "success"}}, ValidationsResult{Meta: Meta{"recipients validate", "success"}}, SoundsResult{Meta: Meta{"sounds", "success"}}, LimitsResult{Meta: Meta{"limits", "success"}}, AuthStatusResult{Meta: Meta{"auth status", "success"}}, BackendResult{Meta: Meta{"auth backend", "success"}}, InfoResult{Meta: Meta{"info", "success"}}, VersionResult{Meta: Meta{"version", "success"}},
 	}
 	for _, result := range eligible {
 		var out bytes.Buffer
@@ -141,5 +141,57 @@ func TestPlainEligibility(t *testing.T) {
 		if err := (PlainRenderer{}).Result(&out, result); err == nil || out.Len() != 0 {
 			t.Fatalf("expected plain rejection for %s", result.CommandName())
 		}
+	}
+}
+
+func TestSendRowValidationRejectsIncoherentPublicResults(t *testing.T) {
+	validError := &domain.ErrorDetail{Code: "network_failure", Category: apperror.CategoryNetwork, Message: "request failed"}
+	quota := 1
+	cases := map[string]domain.TargetResult{
+		"priority below range":      {Alias: "a", Outcome: domain.Sent, Priority: -3},
+		"priority above range":      {Alias: "a", Outcome: domain.Sent, Priority: 3},
+		"sent error":                {Alias: "a", Outcome: domain.Sent, Error: validError},
+		"planned error":             {Alias: "a", Outcome: domain.Planned, Error: validError},
+		"skipped error":             {Alias: "a", Outcome: domain.Skipped, Error: validError},
+		"failed missing error":      {Alias: "a", Outcome: domain.Failed},
+		"failed empty error code":   {Alias: "a", Outcome: domain.Failed, Error: &domain.ErrorDetail{Category: apperror.CategoryNetwork, Message: "failed"}},
+		"failed ambiguous error":    {Alias: "a", Outcome: domain.Failed, Error: &domain.ErrorDetail{Code: "network_failure", Category: apperror.CategoryNetwork, Message: "failed", Ambiguous: true}},
+		"ambiguous missing error":   {Alias: "a", Outcome: domain.Ambiguous},
+		"ambiguous definite error":  {Alias: "a", Outcome: domain.Ambiguous, Error: validError},
+		"unknown category":          {Alias: "a", Outcome: domain.Failed, Error: &domain.ErrorDetail{Code: "bad", Category: "other", Message: "failed"}},
+		"negative quota":            {Alias: "a", Outcome: domain.Sent, QuotaRemaining: intPtr(-1)},
+		"planned response metadata": {Alias: "a", Outcome: domain.Planned, RequestID: "request"},
+		"skipped response metadata": {Alias: "a", Outcome: domain.Skipped, QuotaRemaining: &quota},
+	}
+	for name, target := range cases {
+		t.Run(name, func(t *testing.T) {
+			batch := domain.BatchResult{Command: "send", Results: []domain.TargetResult{target}}
+			status := "success"
+			if target.Outcome == domain.Planned {
+				batch.DryRun, status = true, "dry_run"
+			}
+			if target.Outcome == domain.Failed {
+				status = "failed"
+			}
+			if target.Outcome == domain.Ambiguous {
+				status = "ambiguous"
+			}
+			if target.Outcome == domain.Skipped {
+				batch.Interrupted, status = true, "interrupted"
+			}
+			var out bytes.Buffer
+			if err := (JSONRenderer{}).Result(&out, SendResult{Meta: Meta{"send", status}, Batch: batch}); err == nil || out.Len() != 0 {
+				t.Fatalf("expected rejection without output: err=%v output=%q", err, out.String())
+			}
+		})
+	}
+}
+
+func intPtr(value int) *int { return &value }
+
+func TestSendDTOAmbiguityComesFromOutcome(t *testing.T) {
+	dto := sendDTO(domain.BatchResult{Results: []domain.TargetResult{{Outcome: domain.Ambiguous, Error: &domain.ErrorDetail{Ambiguous: false}}}})
+	if dto.Targets[0].Error == nil || !dto.Targets[0].Error.Ambiguous {
+		t.Fatal("ambiguous outcome must render ambiguous error defensively")
 	}
 }

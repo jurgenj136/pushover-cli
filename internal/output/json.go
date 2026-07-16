@@ -221,7 +221,7 @@ func sendDTO(batch domain.BatchResult) sendJSON {
 		}
 		var e *sendErrorJSON
 		if target.Error != nil {
-			e = &sendErrorJSON{Code: safeHuman(target.Error.Code), Category: safeHuman(target.Error.Category), Message: safeHuman(target.Error.Message), Retryable: false, Ambiguous: target.Error.Ambiguous}
+			e = &sendErrorJSON{Code: safeHuman(target.Error.Code), Category: safeHuman(target.Error.Category), Message: safeHuman(target.Error.Message), Retryable: false, Ambiguous: target.Outcome == domain.Ambiguous}
 		}
 		targets = append(targets, sendTargetJSON{Alias: safeHuman(target.Alias), Outcome: target.Outcome, Priority: target.Priority, RequestID: sanitizePtr(req), ReceiptID: sanitizePtr(receipt), QuotaRemaining: target.QuotaRemaining, Error: e})
 	}

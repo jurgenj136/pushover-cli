@@ -91,6 +91,9 @@ func validateResult(result CommandResult) error {
 			if !send.Batch.DryRun && target.Outcome == domain.Planned {
 				return usage("output_outcome_invalid", "non-dry-run send cannot contain planned targets")
 			}
+			if err := validateTargetResult(target); err != nil {
+				return err
+			}
 		}
 		c := sendCounts(send.Batch.Results)
 		if c.Skipped == len(send.Batch.Results) && !send.Batch.Interrupted {
@@ -105,6 +108,49 @@ func validateResult(result CommandResult) error {
 		return usage("output_command_mismatch", fmt.Sprintf("result type does not match command %q", command))
 	}
 	return nil
+}
+
+func validateTargetResult(target domain.TargetResult) error {
+	if target.Priority < -2 || target.Priority > 2 {
+		return usage("output_priority_invalid", "send target priority is out of range")
+	}
+	if target.QuotaRemaining != nil && *target.QuotaRemaining < 0 {
+		return usage("output_quota_invalid", "send target quota is negative")
+	}
+	switch target.Outcome {
+	case domain.Planned, domain.Skipped:
+		if target.RequestID != "" || target.ReceiptID != "" || target.QuotaRemaining != nil {
+			return usage("output_metadata_invalid", "undelivered target contains response metadata")
+		}
+		if target.Error != nil {
+			return usage("output_error_invalid", "undelivered target contains an error")
+		}
+	case domain.Sent:
+		if target.Error != nil {
+			return usage("output_error_invalid", "sent target contains an error")
+		}
+	case domain.Failed, domain.Ambiguous:
+		if target.Error == nil {
+			return usage("output_error_missing", "failed or ambiguous target is missing an error")
+		}
+		if target.Error.Code == "" || !safeErrorCategory(target.Error.Category) {
+			return usage("output_error_invalid", "send target error is invalid")
+		}
+		wantAmbiguous := target.Outcome == domain.Ambiguous
+		if target.Error.Ambiguous != wantAmbiguous {
+			return usage("output_ambiguity_invalid", "send target error ambiguity does not match outcome")
+		}
+	}
+	return nil
+}
+
+func safeErrorCategory(category string) bool {
+	switch category {
+	case apperror.CategoryUsage, apperror.CategoryConfig, apperror.CategoryAuthentication, apperror.CategoryValidation, apperror.CategoryQuota, apperror.CategoryNetwork, apperror.CategoryConfirmation, apperror.CategoryInternal:
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeResult(result CommandResult) CommandResult {

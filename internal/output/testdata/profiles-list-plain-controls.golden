@@ -1,1 +1,1 @@
-n\t	false	0	x\r\n	s
+slash\\tab\tcr\rlf\ncontrols\u0001\u007F\u0080\u009F	false	0	safe	s
