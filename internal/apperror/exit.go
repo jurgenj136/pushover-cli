@@ -37,12 +37,18 @@ func Exit(commandError error, batch *domain.BatchResult) int {
 }
 
 func exitBatch(batch *domain.BatchResult) int {
-	sent, ambiguous, failed, skipped := 0, 0, 0, 0
+	sent, planned, ambiguous, failed, skipped := 0, 0, 0, 0, 0
 	category := ""
 	for _, result := range batch.Results {
 		switch result.Outcome {
 		case domain.Sent:
 			sent++
+		case domain.Planned:
+			if batch.DryRun {
+				planned++
+			} else {
+				skipped++
+			}
 		case domain.Ambiguous:
 			ambiguous++
 		case domain.Failed:
@@ -54,11 +60,14 @@ func exitBatch(batch *domain.BatchResult) int {
 					category = "mixed"
 				}
 			}
-		case domain.Skipped, domain.Planned:
+		case domain.Skipped:
 			skipped++
 		}
 	}
 	if sent > 0 && (ambiguous > 0 || failed > 0 || skipped > 0 || batch.Interrupted) {
+		return ExitPartial
+	}
+	if planned > 0 && (ambiguous > 0 || failed > 0 || skipped > 0 || batch.Interrupted) {
 		return ExitPartial
 	}
 	if ambiguous > 0 {
@@ -68,6 +77,9 @@ func exitBatch(batch *domain.BatchResult) int {
 		return ExitInterrupted
 	}
 	if failed > 0 && skipped == 0 {
+		if category == "mixed" {
+			return ExitPartial
+		}
 		return exitCategory(category)
 	}
 	if failed > 0 || skipped > 0 {
@@ -80,7 +92,7 @@ func exitCategory(category string) int {
 	switch category {
 	case CategoryUsage:
 		return ExitUsage
-	case CategoryConfig:
+	case CategoryConfig, CategoryAuthentication:
 		return ExitConfiguration
 	case CategoryValidation:
 		return ExitValidation
@@ -99,5 +111,5 @@ func exitCategory(category string) int {
 // wrapped cause to renderers.
 func Is(err error, category string) bool {
 	var typed *Error
-	return errors.As(err, &typed) && typed.Category == category
+	return errors.As(err, &typed) && typed != nil && typed.Category == category
 }

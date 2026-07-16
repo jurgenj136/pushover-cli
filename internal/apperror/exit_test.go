@@ -15,6 +15,7 @@ func TestExitCommandErrors(t *testing.T) {
 		{"internal", New(CodeInternal, CategoryInternal, "x"), ExitInternal},
 		{"usage", New("bad_flag", CategoryUsage, "x"), ExitUsage},
 		{"config", New("bad_config", CategoryConfig, "x"), ExitConfiguration},
+		{"authentication", New("bad_auth", CategoryAuthentication, "x"), ExitConfiguration},
 		{"validation", New("bad_input", CategoryValidation, "x"), ExitValidation},
 		{"quota", New("quota", CategoryQuota, "x"), ExitQuota},
 		{"network", New("network", CategoryNetwork, "x"), ExitNetwork},
@@ -32,16 +33,19 @@ func TestExitCommandErrors(t *testing.T) {
 func TestExitBatchOutcomes(t *testing.T) {
 	quota := &domain.ErrorDetail{Category: CategoryQuota}
 	network := &domain.ErrorDetail{Category: CategoryNetwork}
+	validation := &domain.ErrorDetail{Category: CategoryValidation}
 	for _, test := range []struct {
 		name  string
 		batch *domain.BatchResult
 		want  int
 	}{
 		{"success", &domain.BatchResult{Results: []domain.TargetResult{{Outcome: domain.Sent}}}, ExitSuccess},
+		{"planned dry run", &domain.BatchResult{DryRun: true, Results: []domain.TargetResult{{Outcome: domain.Planned}}}, ExitSuccess},
 		{"quota", &domain.BatchResult{Results: []domain.TargetResult{{Outcome: domain.Failed, Error: quota}}}, ExitQuota},
 		{"network", &domain.BatchResult{Results: []domain.TargetResult{{Outcome: domain.Failed, Error: network}}}, ExitNetwork},
 		{"ambiguous", &domain.BatchResult{Results: []domain.TargetResult{{Outcome: domain.Ambiguous}}}, ExitAmbiguous},
 		{"mixed", &domain.BatchResult{Results: []domain.TargetResult{{Outcome: domain.Sent}, {Outcome: domain.Failed, Error: network}}}, ExitPartial},
+		{"mixed failed categories", &domain.BatchResult{Results: []domain.TargetResult{{Outcome: domain.Failed, Error: network}, {Outcome: domain.Failed, Error: validation}}}, ExitPartial},
 		{"interrupted no delivery", &domain.BatchResult{Interrupted: true, Results: []domain.TargetResult{{Outcome: domain.Skipped}}}, ExitInterrupted},
 		{"interrupted ambiguity", &domain.BatchResult{Interrupted: true, Results: []domain.TargetResult{{Outcome: domain.Ambiguous}}}, ExitAmbiguous},
 	} {
@@ -50,5 +54,13 @@ func TestExitBatchOutcomes(t *testing.T) {
 				t.Fatalf("Exit = %d, want %d", got, test.want)
 			}
 		})
+	}
+}
+
+func TestExitTypedNilErrorIsInternal(t *testing.T) {
+	var typedNil *Error
+	var err error = typedNil
+	if got := Exit(err, nil); got != ExitInternal {
+		t.Fatalf("Exit = %d, want %d", got, ExitInternal)
 	}
 }

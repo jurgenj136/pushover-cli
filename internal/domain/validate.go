@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strings"
@@ -36,6 +37,30 @@ func ValidateIdentifier(value string) error {
 	return nil
 }
 
+// ValidateCredentials checks the complete atomic Pushover credential pair.
+// Errors name only the invalid field and never include credential values.
+func ValidateCredentials(credentials Credentials) error {
+	if err := ValidateIdentifier(credentials.Token); err != nil {
+		return invalid("application token", "must be 30 alphanumeric characters")
+	}
+	if err := ValidateIdentifier(credentials.UserKey); err != nil {
+		return invalid("recipient key", "must be 30 alphanumeric characters")
+	}
+	return nil
+}
+
+// ValidateE2EEKey validates the stored textual 32-byte key representation.
+func ValidateE2EEKey(key []byte) error {
+	if len(key) != 64 {
+		return invalid("encryption key", "must be 64 hexadecimal characters")
+	}
+	decoded := make([]byte, hex.DecodedLen(len(key)))
+	if _, err := hex.Decode(decoded, key); err != nil {
+		return invalid("encryption key", "must be 64 hexadecimal characters")
+	}
+	return nil
+}
+
 func ValidateDevice(device string) error {
 	if device == "" {
 		return nil
@@ -59,6 +84,9 @@ func ValidateSavedPriority(priority int) error {
 }
 
 func ValidateTargetPayload(payload TargetPayload) error {
+	if err := ValidateCredentials(payload.Target.Credentials); err != nil {
+		return err
+	}
 	if err := ValidateMessage(payload.Message); err != nil {
 		return err
 	}
@@ -67,11 +95,16 @@ func ValidateTargetPayload(payload TargetPayload) error {
 			return err
 		}
 	}
-	if payload.Target.Validated && payload.Target.Kind == KindGroup && len(payload.Message.Devices) > 0 {
+	if payload.Target.Kind == KindGroup && len(payload.Message.Devices) > 0 {
 		return invalid("device", "cannot be used with an ordinary group")
 	}
 	if payload.Target.Kind != KindUnknown && payload.Target.Kind != KindUser && payload.Target.Kind != KindGroup && payload.Target.Kind != KindTeamGroup {
 		return invalid("recipient kind", "is unsupported")
+	}
+	if payload.Message.Encrypted {
+		if err := ValidateE2EEKey(payload.Target.E2EEKey); err != nil {
+			return err
+		}
 	}
 	return nil
 }

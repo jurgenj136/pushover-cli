@@ -3,20 +3,24 @@ package apperror
 
 import (
 	"errors"
+	"fmt"
+	"io"
 
 	"github.com/jurgenj136/pushover-cli/internal/domain"
 )
 
 const (
-	CodeInternal = "internal"
+	CodeInternal    = "internal"
+	MessageInternal = "internal error"
 
-	CategoryInternal     = "internal"
-	CategoryUsage        = "usage"
-	CategoryConfig       = "configuration"
-	CategoryValidation   = "validation"
-	CategoryQuota        = "quota"
-	CategoryNetwork      = "network"
-	CategoryConfirmation = "confirmation"
+	CategoryInternal       = "internal"
+	CategoryUsage          = "usage"
+	CategoryConfig         = "configuration"
+	CategoryAuthentication = "authentication"
+	CategoryValidation     = "validation"
+	CategoryQuota          = "quota"
+	CategoryNetwork        = "network"
+	CategoryConfirmation   = "confirmation"
 )
 
 // Error carries the stable data renderers may expose. cause is deliberately
@@ -33,9 +37,30 @@ type Error struct {
 	secrets []string
 }
 
-func (e *Error) Error() string { return Sanitize(e.Message, e.secrets...) }
+func (e *Error) Error() string {
+	if e == nil {
+		return MessageInternal
+	}
+	return Sanitize(e.Message, e.secrets...)
+}
 
-func (e *Error) Unwrap() error { return e.cause }
+func (e *Error) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+// Format prevents fmt's %#v and %+v struct paths from exposing the retained
+// cause or secret registry. Every verb emits only the sanitized safe message.
+func (e *Error) Format(state fmt.State, verb rune) {
+	message := e.Error()
+	if verb == 'q' {
+		_, _ = fmt.Fprintf(state, "%q", message)
+		return
+	}
+	_, _ = io.WriteString(state, message)
+}
 
 type Option func(*Error)
 
@@ -69,7 +94,7 @@ func SafeDetail(err error) *domain.ErrorDetail {
 		return nil
 	}
 	var typed *Error
-	if errors.As(err, &typed) {
+	if errors.As(err, &typed) && typed != nil {
 		return &domain.ErrorDetail{
 			Code:      safeCode(typed.Code),
 			Category:  safeCategory(typed.Category),
@@ -81,7 +106,7 @@ func SafeDetail(err error) *domain.ErrorDetail {
 	return &domain.ErrorDetail{
 		Code:     CodeInternal,
 		Category: CategoryInternal,
-		Message:  Sanitize(err.Error()),
+		Message:  MessageInternal,
 	}
 }
 
@@ -93,8 +118,10 @@ func safeCode(value string) string {
 }
 
 func safeCategory(value string) string {
-	if value == "" {
+	switch value {
+	case CategoryInternal, CategoryUsage, CategoryConfig, CategoryAuthentication, CategoryValidation, CategoryQuota, CategoryNetwork, CategoryConfirmation:
+		return value
+	default:
 		return CategoryInternal
 	}
-	return Sanitize(value)
 }

@@ -2,6 +2,7 @@ package operation
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,6 +11,23 @@ import (
 type fixedClock struct{ now time.Time }
 
 func (c fixedClock) Now() time.Time { return c.now }
+
+type mutableClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *mutableClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *mutableClock) Set(now time.Time) {
+	c.mu.Lock()
+	c.now = now
+	c.mu.Unlock()
+}
 
 type recordedContextMaker struct {
 	deadlines []time.Time
@@ -64,6 +82,17 @@ func TestStartOverrideAndBounds(t *testing.T) {
 			t.Fatal("invalid override should fail")
 		}
 	}
+	for _, override := range []time.Duration{time.Second, 15 * time.Minute} {
+		maker := &recordedContextMaker{}
+		scope, err := (Factory{Clock: fixedClock{now}, Contexts: maker}).Start(context.Background(), &override)
+		if err != nil {
+			t.Fatalf("inclusive override %s rejected: %v", override, err)
+		}
+		if got, want := maker.deadlines[0], now.Add(override); !got.Equal(want) {
+			t.Fatalf("deadline = %s, want %s", got, want)
+		}
+		scope.Close()
+	}
 	maker := &recordedContextMaker{}
 	override := 3 * time.Second
 	scope, err := (Factory{Clock: fixedClock{now}, Contexts: maker}).Start(context.Background(), &override)
@@ -80,6 +109,50 @@ func TestStartOverrideAndBounds(t *testing.T) {
 	}
 	if _, _, err := scope.Phase("nope"); err == nil {
 		t.Fatal("unknown phase should fail")
+	}
+}
+
+func TestExpiredTotalCapsPhaseAtTotalDeadline(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	clock := &mutableClock{now: now}
+	maker := &recordedContextMaker{}
+	override := time.Second
+	scope, err := (Factory{Clock: clock, Contexts: maker}).Start(context.Background(), &override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Set(now.Add(2 * time.Second))
+	_, cancel, err := scope.Phase(PhaseSend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if got, want := maker.deadlines[1], now.Add(override); !got.Equal(want) {
+		t.Fatalf("expired phase deadline = %s, want total %s", got, want)
+	}
+}
+
+func TestScopeCloseIsZeroValueSafeAndConcurrent(t *testing.T) {
+	var zero Scope
+	zero.Close()
+
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	maker := &recordedContextMaker{}
+	scope, err := (Factory{Clock: fixedClock{now}, Contexts: maker}).Start(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wait sync.WaitGroup
+	for range 100 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			scope.Close()
+		}()
+	}
+	wait.Wait()
+	if got := maker.cancels.Load(); got != 1 {
+		t.Fatalf("total cancels = %d, want 1", got)
 	}
 }
 
