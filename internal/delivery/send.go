@@ -35,6 +35,10 @@ type Runner struct {
 	Confirmer Confirmer
 	Signals   <-chan os.Signal
 	Scope     operation.Scope
+
+	// beforeSchedule is a deterministic test barrier immediately before the
+	// serialized launch gate. Production leaves it nil.
+	beforeSchedule func()
 }
 
 // Run delivers a sealed plan in input order. Per-target delivery failures are
@@ -53,47 +57,74 @@ func (r *Runner) Run(ctx context.Context, plan preflight.FinalizedSendPlan, opti
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	targets := plan.Targets()
+	batch := domain.BatchResult{Command: "send", Results: make([]domain.TargetResult, 0, len(targets))}
 	if err := ctx.Err(); err != nil {
-		return domain.BatchResult{}, err
+		batch.Results = append(batch.Results, failedBeforeSend(targets[0], err))
+		appendSkipped(&batch, targets[1:])
+		return batch, nil
 	}
 
-	// Scope is the sole total deadline. A caller can only narrow it by
-	// cancellation; it can never replace or extend it.
-	stopCaller := context.AfterFunc(ctx, r.Scope.Close)
-	defer stopCaller()
-
+	// Scope remains the sole total deadline. runCtx is only a cancellation
+	// child, allowing the caller to narrow that scope without replacing it.
+	runCtx, cancelRun := context.WithCancel(r.Scope.Context())
+	stopCaller := context.AfterFunc(ctx, cancelRun)
+	defer func() { stopCaller(); cancelRun() }()
+	confirmationCtx, cancelConfirmation := context.WithCancel(runCtx)
+	monitor := startInterruptMonitor(r.Signals, ctx, r.Scope.Context(), cancelConfirmation)
+	defer func() { cancelConfirmation(); monitor.close() }()
 	confirmation := plan.Confirmation()
 	if confirmation.Priority == domain.PriorityEmergency && !options.AssumeYes {
 		if r.Confirmer == nil {
 			return domain.BatchResult{}, apperror.New("emergency_confirmation_required", apperror.CategoryConfirmation, "emergency send requires confirmation")
 		}
 		// This is deliberately the final action before mutation scheduling.
-		if err := r.Confirmer.Confirm(r.Scope.Context(), confirmation); err != nil {
+		if err := r.Confirmer.Confirm(confirmationCtx, confirmation); err != nil {
+			state := monitor.inspect()
+			if state.interrupted {
+				batch.Interrupted = true
+				appendSkipped(&batch, targets)
+				return batch, nil
+			}
+			if state.err != nil {
+				batch.Results = append(batch.Results, failedBeforeSend(targets[0], state.err))
+				appendSkipped(&batch, targets[1:])
+				return batch, nil
+			}
 			return domain.BatchResult{}, err
 		}
 	}
-
-	targets := plan.Targets()
-	batch := domain.BatchResult{Command: "send", Results: make([]domain.TargetResult, 0, len(targets))}
-	interrupts := newInterruptState(r.Signals)
+	if state := monitor.inspect(); state.interrupted {
+		batch.Interrupted = true
+		appendSkipped(&batch, targets)
+		return batch, nil
+	} else if state.err != nil {
+		batch.Results = append(batch.Results, failedBeforeSend(targets[0], state.err))
+		appendSkipped(&batch, targets[1:])
+		return batch, nil
+	}
 
 	for index, target := range targets {
-		interrupts.drain()
-		if interrupts.interrupted() {
-			batch.Interrupted = true
-			appendSkipped(&batch, targets[index:])
-			break
-		}
-		if err := r.Scope.Context().Err(); err != nil {
-			batch.Results = append(batch.Results, failedBeforeSend(target, err))
-			appendSkipped(&batch, targets[index+1:])
-			break
-		}
-
-		phase, cancel, err := r.Scope.Phase(operation.PhaseSend)
+		phase, phaseCancel, err := r.Scope.Phase(operation.PhaseSend)
 		if err != nil {
 			batch.Results = append(batch.Results, failedBeforeSend(target, err))
 			appendSkipped(&batch, targets[index+1:])
+			break
+		}
+		phase, cancel := cancellationChild(phase, runCtx, phaseCancel)
+		if r.beforeSchedule != nil {
+			r.beforeSchedule()
+		}
+		decision := monitor.begin(cancel)
+		if !decision.started {
+			cancel()
+			if decision.interrupted {
+				batch.Interrupted = true
+				appendSkipped(&batch, targets[index:])
+			} else {
+				batch.Results = append(batch.Results, failedBeforeSend(target, decision.err))
+				appendSkipped(&batch, targets[index+1:])
+			}
 			break
 		}
 		result := make(chan attemptedSend, 1)
@@ -102,15 +133,26 @@ func (r *Runner) Run(ctx context.Context, plan preflight.FinalizedSendPlan, opti
 			result <- attemptedSend{response: response, err: sendErr}
 		}(target)
 
-		attempt := interrupts.wait(result, cancel)
+		attempt := <-result
+		state := monitor.finish()
 		cancel()
 		batch.Results = append(batch.Results, resultFor(target, attempt))
-		if interrupts.interrupted() {
+		if state.interrupted {
 			batch.Interrupted = true
 		}
 	}
 
 	return batch, nil
+}
+
+func cancellationChild(phase, runCtx context.Context, phaseCancel context.CancelFunc) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(phase)
+	stopRun := context.AfterFunc(runCtx, cancel)
+	return ctx, func() {
+		stopRun()
+		cancel()
+		phaseCancel()
+	}
 }
 
 type attemptedSend struct {

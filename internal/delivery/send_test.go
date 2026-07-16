@@ -37,6 +37,47 @@ func TestRunRejectsInvalidPlanBeforeConfirmationOrSend(t *testing.T) {
 	}
 }
 
+func TestRunPreCanceledCallerReturnsOrderedDefiniteBatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		targets    int
+		wantExit   int
+		wantResult []domain.TargetOutcome
+	}{
+		{name: "one target exits definite network", targets: 1, wantExit: apperror.ExitNetwork, wantResult: []domain.TargetOutcome{domain.Failed}},
+		{name: "multi target exits partial", targets: 2, wantExit: apperror.ExitPartial, wantResult: []domain.TargetOutcome{domain.Failed, domain.Skipped}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			client := &scriptedClient{}
+			confirmer := &recordingConfirmer{}
+			runner, closeScope := newRunner(t, client, confirmer, nil)
+			defer closeScope()
+
+			batch, err := runner.Run(ctx, finalizedPlan(t, test.targets, domain.PriorityNormal), RunOptions{})
+			if err != nil {
+				t.Fatalf("command error = %v, want ordered batch", err)
+			}
+			if len(batch.Results) != len(test.wantResult) {
+				t.Fatalf("results = %#v", batch.Results)
+			}
+			for index, want := range test.wantResult {
+				if batch.Results[index].Outcome != want {
+					t.Fatalf("result[%d] = %s, want %s", index, batch.Results[index].Outcome, want)
+				}
+			}
+			if got := apperror.Exit(nil, &batch); got != test.wantExit {
+				t.Fatalf("exit = %d, want %d", got, test.wantExit)
+			}
+			if client.CallCount() != 0 || confirmer.CallCount() != 0 {
+				t.Fatalf("pre-canceled run mutated: sends=%d confirms=%d", client.CallCount(), confirmer.CallCount())
+			}
+		})
+	}
+}
+
 func TestRunConfirmationStateMatrix(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -194,6 +235,130 @@ func TestRunFirstInterruptStopsBeforeAndBetweenTargets(t *testing.T) {
 		}
 		assertInterruptedSkipped(t, batch, 1, 1)
 	})
+}
+
+func TestRunLinearizesSignalAndCallerCancellationBeforeLaunch(t *testing.T) {
+	tests := []struct {
+		name      string
+		interrupt func(chan<- os.Signal, context.CancelFunc)
+		wantInt   bool
+	}{
+		{name: "queued signal in pre-launch window", interrupt: func(signals chan<- os.Signal, _ context.CancelFunc) { signals <- os.Interrupt }, wantInt: true},
+		{name: "caller cancellation in pre-launch window", interrupt: func(_ chan<- os.Signal, cancel context.CancelFunc) { cancel() }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			signals := make(chan os.Signal, 1)
+			caller, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			client := &scriptedClient{}
+			runner, closeScope := newRunner(t, client, nil, signals)
+			defer closeScope()
+			atGate := make(chan struct{})
+			release := make(chan struct{})
+			runner.beforeSchedule = func() {
+				close(atGate)
+				<-release
+			}
+			plan := finalizedPlan(t, 2, domain.PriorityNormal)
+			result := make(chan domain.BatchResult, 1)
+			errs := make(chan error, 1)
+			go func() {
+				batch, err := runner.Run(caller, plan, RunOptions{})
+				result <- batch
+				errs <- err
+			}()
+			<-atGate
+			test.interrupt(signals, cancel)
+			close(release)
+			batch := <-result
+			if err := <-errs; err != nil {
+				t.Fatal(err)
+			}
+			if got := client.CallCount(); got != 0 {
+				t.Fatalf("Send calls = %d, want 0", got)
+			}
+			if len(batch.Results) != 2 {
+				t.Fatalf("results = %#v", batch.Results)
+			}
+			if test.wantInt {
+				assertInterruptedSkipped(t, batch, 0, 2)
+			}
+		})
+	}
+}
+
+func TestRunFirstSignalCancelsBlockingConfirmationAndSkipsAll(t *testing.T) {
+	signals := make(chan os.Signal, 1)
+	confirmer := &blockingConfirmer{started: make(chan struct{})}
+	client := &scriptedClient{}
+	runner, closeScope := newRunner(t, client, confirmer, signals)
+	defer closeScope()
+	plan := finalizedPlan(t, 2, domain.PriorityEmergency)
+	result := make(chan domain.BatchResult, 1)
+	errs := make(chan error, 1)
+	go func() {
+		batch, err := runner.Run(context.Background(), plan, RunOptions{})
+		result <- batch
+		errs <- err
+	}()
+	<-confirmer.started
+	signals <- os.Interrupt
+	select {
+	case batch := <-result:
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+		assertInterruptedSkipped(t, batch, 0, 2)
+		if got := apperror.Exit(nil, &batch); got != apperror.ExitInterrupted {
+			t.Fatalf("exit = %d, want interrupted", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("confirmation did not unblock after first signal")
+	}
+	if got := client.CallCount(); got != 0 {
+		t.Fatalf("Send calls = %d, want 0", got)
+	}
+}
+
+func TestRunCancellationDuringConfirmationReturnsOrderedDefiniteBatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		cancel func(context.CancelFunc, *Runner)
+	}{
+		{name: "caller", cancel: func(cancel context.CancelFunc, _ *Runner) { cancel() }},
+		{name: "scope", cancel: func(_ context.CancelFunc, runner *Runner) { runner.Scope.Close() }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			caller, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			confirmer := &blockingConfirmer{started: make(chan struct{})}
+			client := &scriptedClient{}
+			runner, closeScope := newRunner(t, client, confirmer, nil)
+			defer closeScope()
+			plan := finalizedPlan(t, 2, domain.PriorityEmergency)
+			result := make(chan domain.BatchResult, 1)
+			errs := make(chan error, 1)
+			go func() {
+				batch, err := runner.Run(caller, plan, RunOptions{})
+				result <- batch
+				errs <- err
+			}()
+			<-confirmer.started
+			test.cancel(cancel, runner)
+			batch := <-result
+			if err := <-errs; err != nil {
+				t.Fatalf("command error = %v, want ordered batch", err)
+			}
+			if batch.Interrupted || len(batch.Results) != 2 || batch.Results[0].Outcome != domain.Failed || batch.Results[1].Outcome != domain.Skipped {
+				t.Fatalf("batch = %#v", batch)
+			}
+			if got := client.CallCount(); got != 0 {
+				t.Fatalf("Send calls = %d, want 0", got)
+			}
+		})
+	}
 }
 
 func TestRunInterruptsActiveRequestOnlyOnSecondSignal(t *testing.T) {
@@ -370,6 +535,14 @@ type recordingConfirmer struct {
 	mu    sync.Mutex
 	calls []preflight.Confirmation
 	err   error
+}
+
+type blockingConfirmer struct{ started chan struct{} }
+
+func (c *blockingConfirmer) Confirm(ctx context.Context, _ preflight.Confirmation) error {
+	close(c.started)
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func (c *recordingConfirmer) Confirm(context.Context, preflight.Confirmation) error {

@@ -71,6 +71,53 @@ func TestDeliveryDetailNormalizesAmbiguousUnknownFailure(t *testing.T) {
 	}
 }
 
+func TestTerminalConfirmerBlockingReadObservesCancellationAndDeadline(t *testing.T) {
+	tests := []struct {
+		name    string
+		context func() (context.Context, context.CancelFunc)
+	}{
+		{name: "caller cancellation", context: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }},
+		{name: "deadline", context: func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 25*time.Millisecond)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reader := &blockingReader{started: make(chan struct{}), release: make(chan struct{})}
+			ctx, cancel := test.context()
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				result <- (TerminalConfirmer{Input: reader, Stderr: io.Discard, IsTTY: func(io.Reader) bool { return true }}).Confirm(ctx, preflight.Confirmation{})
+			}()
+			<-reader.started
+			if test.name == "caller cancellation" {
+				cancel()
+			}
+			select {
+			case err := <-result:
+				if !errors.Is(err, ctx.Err()) {
+					t.Fatalf("err=%v, want %v", err, ctx.Err())
+				}
+			case <-time.After(time.Second):
+				t.Fatal("blocking confirmation read ignored context completion")
+			}
+			close(reader.release)
+		})
+	}
+}
+
 type errWriter struct{}
 
 func (errWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+
+type blockingReader struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingReader) Read([]byte) (int, error) {
+	close(r.started)
+	<-r.release
+	return 0, io.EOF
+}

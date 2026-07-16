@@ -21,6 +21,8 @@ type Builder struct {
 	Validator   pushover.Client
 	Encryptor   e2ee.Service
 	Scope       operation.Scope
+
+	resolve func(context.Context, resolver.Input) (domain.ResolvedSendDraft, error)
 }
 
 func (b *Builder) Build(ctx context.Context, request Request) (FinalizedSendPlan, *domain.BatchResult, error) {
@@ -49,18 +51,26 @@ func (b *Builder) Build(ctx context.Context, request Request) (FinalizedSendPlan
 	}
 	workCtx, stop := callerContext(b.Scope.Context(), ctx)
 	defer stop()
-	draft, err := b.Resolver.Resolve(workCtx, request.Resolve)
+	resolve := b.Resolver.Resolve
+	if b.resolve != nil {
+		resolve = b.resolve
+	}
+	draft, err := resolve(workCtx, request.Resolve)
 	if err != nil {
 		return FinalizedSendPlan{}, nil, err
 	}
+	defer wipePayloadKeys(draft.Targets)
 	targets := make([]domain.TargetPayload, len(draft.Targets))
 	for i := range draft.Targets {
 		targets[i] = clonePayload(draft.Targets[i])
 	}
 	if request.Attachment.LocalPath != "" || remoteURL != nil {
 		if request.DryRun && remoteURL != nil && !request.ValidateNetwork {
-			// A dry run without --validate-network is deliberately offline. The
-			// attachment is omitted from its planned-only output.
+			// The fetch stays offline, but the placeholder preserves attachment
+			// presence for local compatibility checks (notably E2EE conflicts).
+			for i := range targets {
+				targets[i].Message.Attachment = &domain.Attachment{}
+			}
 		} else {
 			if b.Attachments == nil {
 				return FinalizedSendPlan{}, nil, apperror.New("attachment_unavailable", apperror.CategoryInternal, "attachment loader is not configured")

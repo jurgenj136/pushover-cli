@@ -262,6 +262,49 @@ func TestPreflightFailuresAlwaysReturnZeroPlanAndNilResult(t *testing.T) {
 	}
 }
 
+func TestBuilderWipesOriginalResolverDraftKeysAfterLateFailure(t *testing.T) {
+	key := []byte(strings.Repeat("a", 64))
+	draft := domain.ResolvedSendDraft{Command: "send", Targets: []domain.TargetPayload{{
+		Target: domain.Target{
+			Alias:       "recipient",
+			Credentials: domain.Credentials{Token: strings.Repeat("t", domain.IdentifierLength), UserKey: strings.Repeat("u", domain.IdentifierLength)},
+			E2EEKey:     key,
+		},
+		Message: domain.Message{Body: "body", Encrypted: true, Priority: domain.PriorityNormal},
+	}}}
+	b := Builder{
+		Resolver:  &resolver.Resolver{},
+		Encryptor: &fakeEncryptor{err: apperror.New("encryption_failed", apperror.CategoryValidation, "encryption failed")},
+		Scope:     testScope(t),
+		resolve: func(context.Context, resolver.Input) (domain.ResolvedSendDraft, error) {
+			return draft, nil
+		},
+	}
+	plan, result, err := b.Build(context.Background(), Request{})
+	if err == nil || result != nil || plan.IsValid() {
+		t.Fatalf("late failure triad mismatch: plan=%#v result=%#v err=%v", plan, result, err)
+	}
+	for i, value := range key {
+		if value != 0 {
+			t.Fatalf("resolver draft key byte %d was not wiped", i)
+		}
+	}
+}
+
+func TestOfflineDryRunModelsRemoteAttachmentWithoutFetching(t *testing.T) {
+	remote := mustURL(t, "https://example.com/image.png")
+	loader := &countingLoader{}
+	b := Builder{Resolver: &resolver.Resolver{}, Attachments: loader, Encryptor: e2ee.Encryptor{Random: bytes.NewReader(bytes.Repeat([]byte{0x42}, 16))}, Scope: testScope(t)}
+	plan, result, err := b.Build(context.Background(), Request{Resolve: suppliedInput(true), DryRun: true, Attachment: AttachmentInput{RemoteURL: remote}})
+	if err == nil || result != nil || plan.IsValid() || loader.remoteCalls != 0 {
+		t.Fatalf("encrypted offline remote dry-run bypassed attachment conflict: plan=%#v result=%#v calls=%d err=%v", plan, result, loader.remoteCalls, err)
+	}
+	plan, result, err = b.Build(context.Background(), Request{Resolve: suppliedInput(false), DryRun: true, Attachment: AttachmentInput{RemoteURL: remote}})
+	if err != nil || result == nil || plan.IsValid() || loader.remoteCalls != 0 {
+		t.Fatalf("plaintext offline remote dry-run mismatch: plan=%#v result=%#v calls=%d err=%v", plan, result, loader.remoteCalls, err)
+	}
+}
+
 func TestRealPlanSealsAndCopiesMutablePayloadState(t *testing.T) {
 	input := suppliedInput(false)
 	input.MessageFields.Devices = true
