@@ -4,6 +4,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 
@@ -25,6 +26,12 @@ type RecipientInput struct {
 	Devices          []string
 	Validated        bool
 }
+type SetupInput struct {
+	Backend    config.Backend
+	Profile    ProfileInput
+	Recipients []RecipientInput
+}
+
 type RemoveProfileOptions struct {
 	ReplaceWith string
 	Force       bool
@@ -42,8 +49,20 @@ type RecipientView struct {
 	Devices                          []string
 	UserKeyResolves, E2EEKeyResolves bool
 }
+type SetupView struct {
+	Profile    ProfileView
+	Recipients []RecipientView
+}
+type SecretConsumer struct{ Resource, Name, Field string }
+type RemovalImpact struct {
+	Consumers                           []SecretConsumer
+	DefaultProfile, ReplacementRequired bool
+	ReplacementProfile                  string
+	ObsoleteSecretCount                 int
+}
 
 type Service interface {
+	Bootstrap(context.Context, SetupInput) (SetupView, error)
 	AddProfile(context.Context, ProfileInput) (ProfileView, error)
 	Profiles(context.Context) ([]ProfileView, error)
 	Profile(context.Context, string) (ProfileView, error)
@@ -53,12 +72,76 @@ type Service interface {
 	Recipients(context.Context) ([]RecipientView, error)
 	Recipient(context.Context, string) (RecipientView, error)
 	RemoveRecipient(context.Context, string) ([]string, error)
+	PreviewRemoveProfile(context.Context, string, RemoveProfileOptions) (RemovalImpact, error)
+	PreviewRemoveRecipient(context.Context, string) (RemovalImpact, error)
+	// SelectedProfileToken returns an owned copy of the selected or default
+	// profile token. The caller must wipe it when it is no longer needed.
+	SelectedProfileToken(context.Context, string) ([]byte, error)
 }
 
 type Manager struct {
 	Config  config.Store
 	Secrets secrets.Store
 	mu      sync.Mutex
+}
+
+func (m *Manager) Bootstrap(ctx context.Context, input SetupInput) (SetupView, error) {
+	if err := validateSetupInput(input); err != nil {
+		return SetupView{}, err
+	}
+	if m == nil || m.Config == nil || m.Secrets == nil {
+		return SetupView{}, settingError("configuration_unavailable", "configuration is unavailable", apperror.CategoryConfig)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.Config.Load(ctx); err == nil {
+		return SetupView{}, settingError("configuration_already_exists", "configuration already exists", apperror.CategoryConfig)
+	} else if !errors.Is(err, config.ErrNotFound) {
+		return SetupView{}, settingError("configuration_unavailable", "configuration is unavailable", apperror.CategoryConfig)
+	}
+	staged := make([]domain.SecretRef, 0, 1+len(input.Recipients)*2)
+	profileRef, err := m.stage(ctx, input.Profile.Token)
+	if err != nil {
+		return SetupView{}, err
+	}
+	staged = append(staged, profileRef)
+	result := config.Config{SchemaVersion: config.CurrentSchemaVersion, Backend: copyBackend(input.Backend), DefaultProfile: input.Profile.Name, Profiles: map[string]config.Profile{input.Profile.Name: {Name: input.Profile.Name, TokenRef: profileRef, Defaults: copyDefaults(input.Profile.Defaults)}}, Recipients: make(map[string]config.Recipient, len(input.Recipients))}
+	for _, recipient := range input.Recipients {
+		userRef, stageErr := m.stage(ctx, recipient.UserKey)
+		if stageErr != nil {
+			if rollbackErr := m.rollback(staged); rollbackErr != nil {
+				return SetupView{}, rollbackErr
+			}
+			return SetupView{}, stageErr
+		}
+		staged = append(staged, userRef)
+		var e2eeRef domain.SecretRef
+		if len(recipient.E2EEKey) != 0 {
+			e2eeRef, stageErr = m.stage(ctx, recipient.E2EEKey)
+			if stageErr != nil {
+				if rollbackErr := m.rollback(staged); rollbackErr != nil {
+					return SetupView{}, rollbackErr
+				}
+				return SetupView{}, stageErr
+			}
+			staged = append(staged, e2eeRef)
+		}
+		result.Recipients[recipient.Alias] = config.Recipient{Alias: recipient.Alias, UserKeyRef: userRef, E2EEKeyRef: e2eeRef, Kind: recipient.Kind, Devices: append([]string(nil), recipient.Devices...), Validated: recipient.Validated}
+	}
+	if err := config.Validate(result); err != nil {
+		if rollbackErr := m.rollback(staged); rollbackErr != nil {
+			return SetupView{}, rollbackErr
+		}
+		return SetupView{}, settingError("setup_invalid", "setup input is invalid", apperror.CategoryValidation)
+	}
+	if err := m.commitStaged(ctx, config.Config{}, result, staged); err != nil {
+		return SetupView{}, err
+	}
+	view := SetupView{Profile: m.profileView(ctx, result, result.Profiles[input.Profile.Name]), Recipients: make([]RecipientView, 0, len(input.Recipients))}
+	for _, recipient := range input.Recipients {
+		view.Recipients = append(view.Recipients, m.recipientView(ctx, result.Recipients[recipient.Alias]))
+	}
+	return view, nil
 }
 
 func (m *Manager) AddProfile(ctx context.Context, input ProfileInput) (ProfileView, error) {
@@ -141,33 +224,24 @@ func (m *Manager) RemoveProfile(ctx context.Context, name string, options Remove
 	if err != nil {
 		return nil, err
 	}
-	if options.ReplaceWith != "" && options.Force {
-		return nil, settingError("profile_removal_options_conflict", "profile removal options cannot be combined", apperror.CategoryUsage)
-	}
-	profile, ok := before.Profiles[name]
-	if !ok {
-		return nil, settingError("profile_missing", "profile is unavailable", apperror.CategoryConfig)
-	}
-	if options.ReplaceWith != "" {
-		if options.ReplaceWith == name {
-			return nil, settingError("profile_replacement_invalid", "profile replacement is invalid", apperror.CategoryValidation)
-		}
-		if _, ok := before.Profiles[options.ReplaceWith]; !ok {
-			return nil, settingError("profile_replacement_invalid", "profile replacement is invalid", apperror.CategoryValidation)
-		}
-	}
-	if before.DefaultProfile == name && options.ReplaceWith == "" && !options.Force {
-		return nil, settingError("default_profile_replacement_required", "removing the default profile requires a replacement or force", apperror.CategoryValidation)
-	}
-	after := config.Clone(before)
-	delete(after.Profiles, name)
-	if before.DefaultProfile == name {
-		after.DefaultProfile = options.ReplaceWith
+	after, refs, _, err := planProfileRemoval(before, name, options)
+	if err != nil {
+		return nil, err
 	}
 	if err := m.Config.Commit(ctx, after); err != nil {
 		return nil, m.commitError(ctx, before, after, nil, err)
 	}
-	return m.deleteOrphaned(ctx, after, []domain.SecretRef{profile.TokenRef}), nil
+	return m.deleteOrphaned(ctx, after, refs), nil
+}
+func (m *Manager) PreviewRemoveProfile(ctx context.Context, name string, options RemoveProfileOptions) (RemovalImpact, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	before, err := m.load(ctx)
+	if err != nil {
+		return RemovalImpact{}, err
+	}
+	_, _, impact, err := planProfileRemoval(before, name, options)
+	return impact, err
 }
 
 func (m *Manager) AddRecipient(ctx context.Context, input RecipientInput) (RecipientView, error) {
@@ -244,16 +318,50 @@ func (m *Manager) RemoveRecipient(ctx context.Context, alias string) ([]string, 
 	if err != nil {
 		return nil, err
 	}
-	recipient, ok := before.Recipients[alias]
-	if !ok {
-		return nil, settingError("recipient_missing", "recipient is unavailable", apperror.CategoryConfig)
+	after, refs, _, err := planRecipientRemoval(before, alias)
+	if err != nil {
+		return nil, err
 	}
-	after := config.Clone(before)
-	delete(after.Recipients, alias)
 	if err := m.Config.Commit(ctx, after); err != nil {
 		return nil, m.commitError(ctx, before, after, nil, err)
 	}
-	return m.deleteOrphaned(ctx, after, []domain.SecretRef{recipient.UserKeyRef, recipient.E2EEKeyRef}), nil
+	return m.deleteOrphaned(ctx, after, refs), nil
+}
+func (m *Manager) PreviewRemoveRecipient(ctx context.Context, alias string) (RemovalImpact, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	before, err := m.load(ctx)
+	if err != nil {
+		return RemovalImpact{}, err
+	}
+	_, _, impact, err := planRecipientRemoval(before, alias)
+	return impact, err
+}
+
+// SelectedProfileToken returns an owned copy of the selected profile token.
+// An empty name selects the configured default. Callers must wipe the returned
+// bytes after use and must not retain them beyond the authenticated operation.
+func (m *Manager) SelectedProfileToken(ctx context.Context, name string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	value, err := m.load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if name == "" {
+		name = value.DefaultProfile
+	}
+	profile, ok := value.Profiles[name]
+	if !ok {
+		return nil, settingError("profile_missing", "profile is unavailable", apperror.CategoryConfig)
+	}
+	token, err := m.Secrets.Get(ctx, profile.TokenRef)
+	if err != nil {
+		return nil, settingError("secret_store_unavailable", "secret store is unavailable", apperror.CategoryConfig)
+	}
+	owned := append([]byte(nil), token...)
+	wipe(token)
+	return owned, nil
 }
 
 func (m *Manager) stage(ctx context.Context, value []byte) (domain.SecretRef, error) {
@@ -361,6 +469,91 @@ func references(value config.Config, wanted domain.SecretRef) bool {
 	}
 	return false
 }
+func planProfileRemoval(before config.Config, name string, options RemoveProfileOptions) (config.Config, []domain.SecretRef, RemovalImpact, error) {
+	if options.ReplaceWith != "" && options.Force {
+		return config.Config{}, nil, RemovalImpact{}, settingError("profile_removal_options_conflict", "profile removal options cannot be combined", apperror.CategoryUsage)
+	}
+	profile, ok := before.Profiles[name]
+	if !ok {
+		return config.Config{}, nil, RemovalImpact{}, settingError("profile_missing", "profile is unavailable", apperror.CategoryConfig)
+	}
+	if options.ReplaceWith != "" {
+		_, exists := before.Profiles[options.ReplaceWith]
+		if options.ReplaceWith == name || !exists {
+			return config.Config{}, nil, RemovalImpact{}, settingError("profile_replacement_invalid", "profile replacement is invalid", apperror.CategoryValidation)
+		}
+	}
+	isDefault := before.DefaultProfile == name
+	if isDefault && options.ReplaceWith == "" && !options.Force {
+		return config.Config{}, nil, RemovalImpact{}, settingError("default_profile_replacement_required", "removing the default profile requires a replacement or force", apperror.CategoryValidation)
+	}
+	after := config.Clone(before)
+	delete(after.Profiles, name)
+	if isDefault {
+		after.DefaultProfile = options.ReplaceWith
+	} else {
+		options.ReplaceWith = ""
+	}
+	refs := []domain.SecretRef{profile.TokenRef}
+	return after, refs, removalImpact(after, refs, isDefault, options.ReplaceWith, isDefault && options.ReplaceWith == ""), nil
+}
+func planRecipientRemoval(before config.Config, alias string) (config.Config, []domain.SecretRef, RemovalImpact, error) {
+	recipient, ok := before.Recipients[alias]
+	if !ok {
+		return config.Config{}, nil, RemovalImpact{}, settingError("recipient_missing", "recipient is unavailable", apperror.CategoryConfig)
+	}
+	after := config.Clone(before)
+	delete(after.Recipients, alias)
+	refs := []domain.SecretRef{recipient.UserKeyRef, recipient.E2EEKeyRef}
+	return after, refs, removalImpact(after, refs, false, "", false), nil
+}
+func removalImpact(after config.Config, refs []domain.SecretRef, isDefault bool, replacement string, replacementRequired bool) RemovalImpact {
+	consumers := secretConsumers(after, refs)
+	obsolete := 0
+	seen := map[domain.SecretRef]bool{}
+	for _, ref := range refs {
+		if ref != "" && !seen[ref] {
+			seen[ref] = true
+			if !references(after, ref) {
+				obsolete++
+			}
+		}
+	}
+	return RemovalImpact{Consumers: consumers, DefaultProfile: isDefault, ReplacementProfile: replacement, ReplacementRequired: replacementRequired, ObsoleteSecretCount: obsolete}
+}
+func secretConsumers(value config.Config, refs []domain.SecretRef) []SecretConsumer {
+	wanted := map[domain.SecretRef]bool{}
+	for _, ref := range refs {
+		if ref != "" {
+			wanted[ref] = true
+		}
+	}
+	var consumers []SecretConsumer
+	for name, profile := range value.Profiles {
+		if wanted[profile.TokenRef] {
+			consumers = append(consumers, SecretConsumer{"profile", name, "token"})
+		}
+	}
+	for alias, recipient := range value.Recipients {
+		if wanted[recipient.UserKeyRef] {
+			consumers = append(consumers, SecretConsumer{"recipient", alias, "user_key"})
+		}
+		if wanted[recipient.E2EEKeyRef] {
+			consumers = append(consumers, SecretConsumer{"recipient", alias, "e2ee_key"})
+		}
+	}
+	sort.Slice(consumers, func(i, j int) bool {
+		if consumers[i].Resource != consumers[j].Resource {
+			return consumers[i].Resource < consumers[j].Resource
+		}
+		if consumers[i].Name != consumers[j].Name {
+			return consumers[i].Name < consumers[j].Name
+		}
+		return consumers[i].Field < consumers[j].Field
+	})
+	return consumers
+}
+
 func (m *Manager) load(ctx context.Context) (config.Config, error) {
 	if m == nil || m.Config == nil || m.Secrets == nil {
 		return config.Config{}, settingError("configuration_unavailable", "configuration is unavailable", apperror.CategoryConfig)
@@ -413,8 +606,32 @@ func validateRecipientInput(input RecipientInput) error {
 	}
 	return nil
 }
+func validateSetupInput(input SetupInput) error {
+	if len(input.Recipients) == 0 || validateProfileInput(input.Profile) != nil {
+		return settingError("setup_invalid", "setup input is invalid", apperror.CategoryValidation)
+	}
+	if config.Validate(config.Config{SchemaVersion: config.CurrentSchemaVersion, Backend: input.Backend, Profiles: map[string]config.Profile{}, Recipients: map[string]config.Recipient{}}) != nil {
+		return settingError("setup_invalid", "setup input is invalid", apperror.CategoryValidation)
+	}
+	seen := map[string]bool{}
+	for _, recipient := range input.Recipients {
+		if seen[recipient.Alias] || validateRecipientInput(recipient) != nil {
+			return settingError("setup_invalid", "setup input is invalid", apperror.CategoryValidation)
+		}
+		seen[recipient.Alias] = true
+	}
+	return nil
+}
 func copyDefaults(value config.MessageDefaults) config.MessageDefaults {
 	value.Devices = append([]string(nil), value.Devices...)
+	return value
+}
+func copyBackend(value config.Backend) config.Backend {
+	metadata := make(map[string]string, len(value.Metadata))
+	for key, item := range value.Metadata {
+		metadata[key] = item
+	}
+	value.Metadata = metadata
 	return value
 }
 func settingError(code, message, category string) error { return apperror.New(code, category, message) }

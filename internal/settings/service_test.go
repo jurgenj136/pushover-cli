@@ -19,11 +19,15 @@ type settingsConfig struct {
 	applyOnCommit bool
 	loadErr       error
 	failLoadAfter int
+	notFoundLoads int
 	loads         int
 }
 
 func (s *settingsConfig) Load(context.Context) (config.Config, error) {
 	s.loads++
+	if s.loads <= s.notFoundLoads {
+		return config.Config{}, config.ErrNotFound
+	}
 	if s.loadErr != nil && s.loads > s.failLoadAfter {
 		return config.Config{}, s.loadErr
 	}
@@ -42,13 +46,20 @@ type settingsSecrets struct {
 	values             map[domain.SecretRef][]byte
 	putRef             domain.SecretRef
 	putErr, deleteErr  error
+	failPutAt          int
 	puts, gets, checks int
 	deleted            []domain.SecretRef
+	lastGet            []byte
 }
 
-func (s *settingsSecrets) Get(context.Context, domain.SecretRef) ([]byte, error) {
+func (s *settingsSecrets) Get(_ context.Context, ref domain.SecretRef) ([]byte, error) {
 	s.gets++
-	return nil, errors.New("Get must not be called")
+	value, ok := s.values[ref]
+	if !ok {
+		return nil, errors.New("secret is unavailable")
+	}
+	s.lastGet = append([]byte(nil), value...)
+	return s.lastGet, nil
 }
 func (s *settingsSecrets) Put(_ context.Context, value []byte) (domain.SecretRef, error) {
 	s.puts++
@@ -57,6 +68,9 @@ func (s *settingsSecrets) Put(_ context.Context, value []byte) (domain.SecretRef
 		ref = domain.SecretRef("secret" + string(rune('a'+s.puts)))
 	}
 	s.values[ref] = append([]byte(nil), value...)
+	if s.failPutAt == s.puts {
+		return ref, errors.New("stage failed")
+	}
 	return ref, s.putErr
 }
 func (s *settingsSecrets) Delete(_ context.Context, ref domain.SecretRef) error {
@@ -225,5 +239,167 @@ func TestDeleteFailureWarnsAfterConfigurationCommit(t *testing.T) {
 	}
 	if _, exists := configuration.value.Recipients["r"]; exists {
 		t.Fatal("recipient was not removed before warning")
+	}
+}
+
+func TestBootstrapStagesAllSecretsAndCommitsOneValidInitialConfiguration(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig(), notFoundLoads: 1}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{}}
+	manager := &Manager{Config: configuration, Secrets: secret}
+
+	input := SetupInput{
+		Backend: config.Backend{Type: "file", Metadata: map[string]string{"identity": "local"}},
+		Profile: ProfileInput{Name: "main", Token: profileToken()},
+		Recipients: []RecipientInput{
+			{Alias: "alice", UserKey: userKey(), Validated: true},
+			{Alias: "bob", UserKey: userKey(), E2EEKey: []byte(strings.Repeat("c", 64))},
+		},
+	}
+	view, err := manager.Bootstrap(context.Background(), input)
+	if err != nil || configuration.commits != 1 || secret.puts != 4 || view.Profile.Name != "main" || len(view.Recipients) != 2 {
+		t.Fatalf("view=%#v err=%v commits=%d puts=%d", view, err, configuration.commits, secret.puts)
+	}
+	if configuration.value.DefaultProfile != "main" || config.Validate(configuration.value) != nil {
+		t.Fatalf("stored config=%#v validation=%v", configuration.value, config.Validate(configuration.value))
+	}
+	input.Backend.Metadata["identity"] = "changed"
+	if configuration.value.Backend.Metadata["identity"] != "local" {
+		t.Fatalf("backend metadata was not copied: %#v", configuration.value.Backend.Metadata)
+	}
+}
+
+func TestBootstrapRejectsExistingOrInvalidInputWithoutStaging(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		configuration *settingsConfig
+		input         SetupInput
+		wantCode      string
+	}{
+		{"existing", &settingsConfig{value: baseSettingsConfig()}, SetupInput{Backend: config.Backend{Type: "native"}, Profile: ProfileInput{Name: "main", Token: profileToken()}, Recipients: []RecipientInput{{Alias: "alice", UserKey: userKey()}}}, "configuration_already_exists"},
+		{"duplicate recipient", &settingsConfig{value: baseSettingsConfig(), notFoundLoads: 1}, SetupInput{Backend: config.Backend{Type: "native"}, Profile: ProfileInput{Name: "main", Token: profileToken()}, Recipients: []RecipientInput{{Alias: "alice", UserKey: userKey()}, {Alias: "alice", UserKey: userKey()}}}, "setup_invalid"},
+		{"bad backend", &settingsConfig{value: baseSettingsConfig(), notFoundLoads: 1}, SetupInput{Backend: config.Backend{Type: "nope"}, Profile: ProfileInput{Name: "main", Token: profileToken()}, Recipients: []RecipientInput{{Alias: "alice", UserKey: userKey()}}}, "setup_invalid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			secret := &settingsSecrets{values: map[domain.SecretRef][]byte{}}
+			_, err := (&Manager{Config: test.configuration, Secrets: secret}).Bootstrap(context.Background(), test.input)
+			if codeOf(err) != test.wantCode || test.configuration.commits != 0 || secret.puts != 0 {
+				t.Fatalf("err=%v commits=%d puts=%d", err, test.configuration.commits, secret.puts)
+			}
+		})
+	}
+}
+
+func TestBootstrapRollsBackStagedSecretsOnFailure(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig(), notFoundLoads: 1, commitErr: config.NewCommitError(config.Unchanged, errors.New("no"))}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{}}
+	_, err := (&Manager{Config: configuration, Secrets: secret}).Bootstrap(context.Background(), SetupInput{Backend: config.Backend{Type: "native"}, Profile: ProfileInput{Name: "main", Token: profileToken()}, Recipients: []RecipientInput{{Alias: "alice", UserKey: userKey()}}})
+	if codeOf(err) != "configuration_commit_failed" || configuration.commits != 1 || len(secret.deleted) != 2 || len(secret.values) != 0 {
+		t.Fatalf("err=%v commits=%d deleted=%v values=%v", err, configuration.commits, secret.deleted, secret.values)
+	}
+}
+
+func TestBootstrapRollsBackPreviouslyStagedSecretsWhenLaterStageFails(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig(), notFoundLoads: 1}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{}, failPutAt: 3}
+	_, err := (&Manager{Config: configuration, Secrets: secret}).Bootstrap(context.Background(), SetupInput{
+		Backend:    config.Backend{Type: "native"},
+		Profile:    ProfileInput{Name: "main", Token: profileToken()},
+		Recipients: []RecipientInput{{Alias: "alice", UserKey: userKey()}, {Alias: "bob", UserKey: userKey()}},
+	})
+	if codeOf(err) != "secret_store_unavailable" || configuration.commits != 0 || len(secret.deleted) != 3 || len(secret.values) != 0 {
+		t.Fatalf("err=%v commits=%d deleted=%v values=%v", err, configuration.commits, secret.deleted, secret.values)
+	}
+}
+
+func TestBootstrapReconcilesUnknownCommitLikeOtherStagedTransactions(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig(), notFoundLoads: 1, commitErr: config.NewCommitError(config.AppliedDurabilityUnknown, errors.New("sync"))}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{}}
+	_, err := (&Manager{Config: configuration, Secrets: secret}).Bootstrap(context.Background(), SetupInput{Backend: config.Backend{Type: "native"}, Profile: ProfileInput{Name: "main", Token: profileToken()}, Recipients: []RecipientInput{{Alias: "alice", UserKey: userKey()}}})
+	if codeOf(err) != "configuration_durability_unknown" || len(secret.deleted) != 2 || len(secret.values) != 0 {
+		t.Fatalf("err=%v deleted=%v values=%v", err, secret.deleted, secret.values)
+	}
+}
+
+func TestRemovalPreviewsArePureAndDescribeSharedSecretConsumers(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig()}
+	configuration.value.DefaultProfile = "old"
+	configuration.value.Profiles = map[string]config.Profile{
+		"old": {Name: "old", TokenRef: "shared"},
+		"new": {Name: "new", TokenRef: "new-token"},
+	}
+	configuration.value.Recipients = map[string]config.Recipient{"alice": {Alias: "alice", UserKeyRef: "shared"}}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{"shared": profileToken(), "new-token": profileToken()}}
+	manager := &Manager{Config: configuration, Secrets: secret}
+
+	impact, err := manager.PreviewRemoveProfile(context.Background(), "old", RemoveProfileOptions{ReplaceWith: "new"})
+	if err != nil || !impact.DefaultProfile || impact.ReplacementProfile != "new" || impact.ObsoleteSecretCount != 0 || len(impact.Consumers) != 1 || impact.Consumers[0] != (SecretConsumer{Resource: "recipient", Name: "alice", Field: "user_key"}) {
+		t.Fatalf("impact=%#v err=%v", impact, err)
+	}
+	if configuration.commits != 0 || len(secret.deleted) != 0 || secret.checks != 0 {
+		t.Fatalf("preview mutated commits=%d deletes=%v checks=%d", configuration.commits, secret.deleted, secret.checks)
+	}
+}
+
+func TestPreviewRemoveRecipientIsPureAndReportsConsumersAndObsoleteSecrets(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig()}
+	configuration.value.Profiles = map[string]config.Profile{"main": {Name: "main", TokenRef: "shared"}}
+	configuration.value.Recipients = map[string]config.Recipient{
+		"remove": {Alias: "remove", UserKeyRef: "shared", E2EEKeyRef: "orphan"},
+	}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{"shared": profileToken(), "orphan": []byte(strings.Repeat("c", 64))}}
+	impact, err := (&Manager{Config: configuration, Secrets: secret}).PreviewRemoveRecipient(context.Background(), "remove")
+	if err != nil || impact.DefaultProfile || impact.ReplacementProfile != "" || impact.ObsoleteSecretCount != 1 || len(impact.Consumers) != 1 || impact.Consumers[0] != (SecretConsumer{Resource: "profile", Name: "main", Field: "token"}) {
+		t.Fatalf("impact=%#v err=%v", impact, err)
+	}
+	if configuration.commits != 0 || len(secret.deleted) != 0 || secret.checks != 0 {
+		t.Fatalf("preview mutated commits=%d deletes=%v checks=%d", configuration.commits, secret.deleted, secret.checks)
+	}
+}
+
+func TestRemovalPreviewAndMutationShareReplacementValidation(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig()}
+	configuration.value.DefaultProfile = "old"
+	configuration.value.Profiles = map[string]config.Profile{"old": {Name: "old", TokenRef: "old-token"}, "new": {Name: "new", TokenRef: "new-token"}}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{"old-token": profileToken(), "new-token": profileToken()}}
+	manager := &Manager{Config: configuration, Secrets: secret}
+	for _, options := range []RemoveProfileOptions{{}, {ReplaceWith: "old"}, {ReplaceWith: "new", Force: true}} {
+		_, previewErr := manager.PreviewRemoveProfile(context.Background(), "old", options)
+		_, removeErr := manager.RemoveProfile(context.Background(), "old", options)
+		if codeOf(previewErr) == "" || codeOf(previewErr) != codeOf(removeErr) {
+			t.Fatalf("options=%#v preview=%v remove=%v", options, previewErr, removeErr)
+		}
+	}
+}
+
+func TestSelectedProfileTokenReturnsOwnedSelectedOrDefaultCopy(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig()}
+	configuration.value.DefaultProfile = "default"
+	configuration.value.Profiles = map[string]config.Profile{"default": {Name: "default", TokenRef: "default-token"}, "other": {Name: "other", TokenRef: "other-token"}}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{"default-token": profileToken(), "other-token": []byte(strings.Repeat("z", 30))}}
+	manager := &Manager{Config: configuration, Secrets: secret}
+	for _, test := range []struct{ name, selected, want string }{{"default", "", strings.Repeat("a", 30)}, {"selected", "other", strings.Repeat("z", 30)}} {
+		t.Run(test.name, func(t *testing.T) {
+			token, err := manager.SelectedProfileToken(context.Background(), test.selected)
+			if err != nil || string(token) != test.want {
+				t.Fatalf("token=%q err=%v", token, err)
+			}
+			for _, value := range secret.lastGet {
+				if value != 0 {
+					t.Fatal("intermediate secret buffer was not wiped")
+				}
+			}
+			token[0] = 'x'
+			if string(secret.values[configuration.value.Profiles[func() string {
+				if test.selected == "" {
+					return "default"
+				}
+				return test.selected
+			}()].TokenRef]) == string(token) {
+				t.Fatal("token aliases secret store memory")
+			}
+		})
+	}
+	if _, err := manager.SelectedProfileToken(context.Background(), "missing"); codeOf(err) != "profile_missing" {
+		t.Fatalf("err=%v", err)
 	}
 }
