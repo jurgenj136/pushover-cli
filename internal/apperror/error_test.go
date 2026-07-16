@@ -56,18 +56,40 @@ func TestErrorFormattingNeverExposesCauseOrSecrets(t *testing.T) {
 	}
 }
 
+func TestSanitizeFinalPassAndMarkerCollision(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		message string
+		secrets []string
+	}{
+		{"control synthesizes whitespace secret", "left\x1bright", []string{" "}},
+		{"normalization synthesizes whitespace secret", "left\tright", []string{" "}},
+		{"legacy marker is itself secret", "before [redacted] after", []string{"[redacted]"}},
+		{"one removal synthesizes another secret", "aXb", []string{"X", "ab"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := Sanitize(test.message, test.secrets...)
+			for _, secret := range test.secrets {
+				if secret != "" && strings.Contains(got, secret) {
+					t.Fatalf("sanitized output %q contains secret %q", got, secret)
+				}
+			}
+		})
+	}
+}
+
 func FuzzSanitizeError(f *testing.F) {
 	f.Add("hello\x1b[31m", "secret")
 	f.Fuzz(func(t *testing.T, message, secret string) {
 		if len(message)+len(secret) > 8*1024 {
 			t.Skip()
 		}
-		got := Sanitize(message, secret)
+		got := Sanitize(message+secret, secret)
 		if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\u009b') {
 			t.Fatalf("unsafe sanitized value: %q", got)
 		}
-		if secret != "" && Sanitize(secret, secret) != redacted {
-			t.Fatalf("registered secret was not replaced")
+		if secret != "" && strings.Contains(got, secret) {
+			t.Fatalf("sanitized output retained registered secret")
 		}
 	})
 }

@@ -23,17 +23,20 @@ const (
 // Exit maps the command error and completed batch to the documented coarse
 // process status. A batch wins because it preserves the actual delivery state.
 func Exit(commandError error, batch *domain.BatchResult) int {
-	if batch != nil && (len(batch.Results) > 0 || batch.Interrupted) {
+	if batch != nil && len(batch.Results) > 0 {
 		return exitBatch(batch)
 	}
-	if commandError == nil {
-		return ExitSuccess
+	if commandError != nil {
+		detail := SafeDetail(commandError)
+		if detail.Ambiguous {
+			return ExitAmbiguous
+		}
+		return exitCategory(detail.Category)
 	}
-	detail := SafeDetail(commandError)
-	if detail.Ambiguous {
-		return ExitAmbiguous
+	if batch != nil && batch.Interrupted {
+		return ExitInterrupted
 	}
-	return exitCategory(detail.Category)
+	return ExitSuccess
 }
 
 func exitBatch(batch *domain.BatchResult) int {

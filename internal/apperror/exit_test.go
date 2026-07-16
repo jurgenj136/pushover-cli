@@ -64,3 +64,18 @@ func TestExitTypedNilErrorIsInternal(t *testing.T) {
 		t.Fatalf("Exit = %d, want %d", got, ExitInternal)
 	}
 }
+
+func TestExitEmptyInterruptedBatchDefersToCommandError(t *testing.T) {
+	interrupted := &domain.BatchResult{Interrupted: true}
+	ambiguous := New("send_timeout", CategoryNetwork, "send outcome unknown", WithAmbiguous(true))
+	if got := Exit(ambiguous, interrupted); got != ExitAmbiguous {
+		t.Fatalf("ambiguous command Exit = %d, want %d", got, ExitAmbiguous)
+	}
+	definite := New("connect_failed", CategoryNetwork, "connection failed")
+	if got := Exit(definite, interrupted); got != ExitNetwork {
+		t.Fatalf("definite command Exit = %d, want %d", got, ExitNetwork)
+	}
+	if got := Exit(nil, interrupted); got != ExitInterrupted {
+		t.Fatalf("empty interrupted batch Exit = %d, want %d", got, ExitInterrupted)
+	}
+}
