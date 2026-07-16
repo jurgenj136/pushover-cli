@@ -67,7 +67,7 @@ func validateResult(result CommandResult) error {
 		return usage("output_status_missing", "status is missing")
 	}
 	if send, ok := result.(SendResult); ok {
-		if command != "send" || send.Batch.Command != "" && send.Batch.Command != "send" {
+		if command != "send" || send.Batch.Command != "send" {
 			return usage("output_command_mismatch", "send result command does not match")
 		}
 		if !sendStatuses[status] {
