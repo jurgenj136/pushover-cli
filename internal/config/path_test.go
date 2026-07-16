@@ -1,9 +1,6 @@
 package config
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestResolvePaths(t *testing.T) {
 	tests := []struct {
@@ -22,10 +19,32 @@ func TestResolvePaths(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if paths.ConfigFile != filepath.FromSlash(test.config) || paths.AgeDataDir != filepath.FromSlash(test.data) {
+			if paths.ConfigFile != test.config || paths.AgeDataDir != test.data {
 				t.Fatalf("paths = %#v", paths)
 			}
 		})
+	}
+}
+
+func TestResolvePathsUsesPOSIXRulesForInjectedPlatforms(t *testing.T) {
+	paths, err := ResolvePaths("linux", "/home/alice//", func(key string) string {
+		switch key {
+		case "XDG_CONFIG_HOME":
+			return "/config//team"
+		case "XDG_DATA_HOME":
+			return "/data//team"
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.ConfigFile != "/config/team/pushover-cli/config.yaml" || paths.AgeDataDir != "/data/team/pushover-cli" {
+		t.Fatalf("paths = %#v", paths)
+	}
+	if !isPOSIXAbsolute("/config") || isPOSIXAbsolute(`C:\\config`) {
+		t.Fatal("POSIX absolute-path helper must use slash semantics")
 	}
 }
 

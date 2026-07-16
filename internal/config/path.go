@@ -21,7 +21,6 @@ func ResolvePaths(goos, home string, getenv func(string) string) (Paths, error) 
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
-	join := filepath.Join
 	switch goos {
 	case "linux":
 		if !isPOSIXAbsolute(home) {
@@ -29,23 +28,23 @@ func ResolvePaths(goos, home string, getenv func(string) string) (Paths, error) 
 		}
 		configRoot := getenv("XDG_CONFIG_HOME")
 		if configRoot == "" {
-			configRoot = join(home, ".config")
-		} else if !filepath.IsAbs(configRoot) {
+			configRoot = path.Join(home, ".config")
+		} else if !path.IsAbs(configRoot) {
 			return Paths{}, errors.New("XDG_CONFIG_HOME must be absolute")
 		}
 		dataRoot := getenv("XDG_DATA_HOME")
 		if dataRoot == "" {
-			dataRoot = join(home, ".local", "share")
-		} else if !filepath.IsAbs(dataRoot) {
+			dataRoot = path.Join(home, ".local", "share")
+		} else if !path.IsAbs(dataRoot) {
 			return Paths{}, errors.New("XDG_DATA_HOME must be absolute")
 		}
-		return Paths{ConfigFile: join(configRoot, "pushover-cli", "config.yaml"), AgeDataDir: join(dataRoot, "pushover-cli")}, nil
+		return Paths{ConfigFile: path.Join(configRoot, "pushover-cli", "config.yaml"), AgeDataDir: path.Join(dataRoot, "pushover-cli")}, nil
 	case "darwin":
 		if !isPOSIXAbsolute(home) {
 			return Paths{}, errors.New("home directory must be absolute")
 		}
-		root := join(home, "Library", "Application Support", "pushover-cli")
-		return Paths{ConfigFile: join(root, "config.yaml"), AgeDataDir: root}, nil
+		root := path.Join(home, "Library", "Application Support", "pushover-cli")
+		return Paths{ConfigFile: path.Join(root, "config.yaml"), AgeDataDir: root}, nil
 	case "windows":
 		appData, localAppData := getenv("APPDATA"), getenv("LOCALAPPDATA")
 		if appData == "" || localAppData == "" {
