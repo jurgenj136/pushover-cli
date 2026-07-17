@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 type contract struct {
@@ -74,6 +76,25 @@ func readFile(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return string(bytes)
+}
+
+type workflowContract struct {
+	Concurrency struct {
+		Group            string `yaml:"group"`
+		CancelInProgress bool   `yaml:"cancel-in-progress"`
+	} `yaml:"concurrency"`
+	Jobs map[string]struct {
+		TimeoutMinutes int `yaml:"timeout-minutes"`
+	} `yaml:"jobs"`
+}
+
+func readWorkflowContract(t *testing.T, name string) workflowContract {
+	t.Helper()
+	var got workflowContract
+	if err := yaml.Unmarshal([]byte(readFile(t, name)), &got); err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	return got
 }
 
 func workflowStepBody(t *testing.T, name, path string) string {
@@ -279,6 +300,36 @@ func TestWorkflowsPinEveryActionAndUseLeastPrivilege(t *testing.T) {
 	for _, want := range []string{c.Versions.GolangCILint, "go vet ./...", "go mod verify", "go-licenses@v1.6.0", "govulncheck", "go test -race ./...", "-fuzz=Fuzz -fuzztime=5s", "scripts/check-generated.sh", "scripts/validate-skill.sh"} {
 		if !strings.Contains(ci, want) {
 			t.Errorf("ci workflow missing %q", want)
+		}
+	}
+}
+
+func TestCIWorkflowTimeoutAndConcurrency(t *testing.T) {
+	workflow := readWorkflowContract(t, ".github/workflows/ci.yml")
+	if workflow.Concurrency.Group != "ci-${{ github.ref }}" {
+		t.Fatalf("CI concurrency group = %q, want %q", workflow.Concurrency.Group, "ci-${{ github.ref }}")
+	}
+	if !workflow.Concurrency.CancelInProgress {
+		t.Fatal("CI concurrency must cancel in-progress runs")
+	}
+	if len(workflow.Jobs) == 0 {
+		t.Fatal("CI workflow has no jobs")
+	}
+	for name, job := range workflow.Jobs {
+		if job.TimeoutMinutes != 15 {
+			t.Errorf("CI job %q timeout-minutes = %d, want 15", name, job.TimeoutMinutes)
+		}
+	}
+}
+
+func TestReleaseWorkflowTimeouts(t *testing.T) {
+	workflow := readWorkflowContract(t, ".github/workflows/release.yml")
+	if len(workflow.Jobs) == 0 {
+		t.Fatal("release workflow has no jobs")
+	}
+	for name, job := range workflow.Jobs {
+		if job.TimeoutMinutes != 30 {
+			t.Errorf("release job %q timeout-minutes = %d, want 30", name, job.TimeoutMinutes)
 		}
 	}
 }
