@@ -12,10 +12,16 @@ artifacts. `v0.1.1` was released, but its Darwin arm64 binary reported
 development metadata and its Homebrew publication pushed `Formula/pushover.rb`
 directly to the tap's `main` branch; the resulting `main` to `main` pull request
 failed nonfatally.
-No supported release exists yet. Until the `v0.1.2` release workflow succeeds,
+`v0.1.2` was released, but versioned `go install` reported `version=dev` and
+`commit=unknown`; it is unsupported.
+No supported release exists yet. Until the `v0.1.3` release workflow succeeds,
 a source build is the only supported installation path. The Homebrew,
 release-archive, and versioned `go install` paths below become supported only
 after that public release succeeds; they do not exist yet.
+
+Release archives and Homebrew install a binary with linker-injected version,
+commit, and build date metadata. Versioned `go install` discovers its version
+from Go module metadata; commit and build date may remain `unknown`.
 
 ### Build from source
 
@@ -25,9 +31,9 @@ cd pushover-cli
 go install ./cmd/pushover
 ```
 
-### Install v0.1.2 after the public release
+### Install v0.1.3 after the public release
 
-After GitHub shows the public `v0.1.2` tag and its release workflow has
+After GitHub shows the public `v0.1.3` tag and its release workflow has
 succeeded, use one of these supported paths:
 
 ```sh
@@ -35,15 +41,15 @@ brew install jurgenj136/tap/pushover
 ```
 
 ```sh
-go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.2
+go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.3
 ```
 
 The Homebrew release workflow opens a formula pull request in
 `jurgenj136/homebrew-tap`; the Homebrew command is available once that formula
 is merged. For an archive, download the archive for your operating system and
-architecture plus its matching `checksums.txt` from the `v0.1.2` GitHub Release.
-Archive names are `pushover_0.1.2_<os>_<arch>.tar.gz` on macOS and Linux, and
-`pushover_0.1.2_<os>_<arch>.zip` on Windows.
+architecture plus its matching `checksums.txt` from the `v0.1.3` GitHub Release.
+Archive names are `pushover_0.1.3_<os>_<arch>.tar.gz` on macOS and Linux, and
+`pushover_0.1.3_<os>_<arch>.zip` on Windows.
 
 Before extracting an archive, verify the downloaded archive against the
 published checksum. Use the command for your operating system from the
@@ -52,21 +58,21 @@ directory containing the archive and `checksums.txt`.
 On macOS, replace the archive name with the file you downloaded:
 
 ```sh
-archive=pushover_0.1.2_darwin_arm64.tar.gz
+archive=pushover_0.1.3_darwin_arm64.tar.gz
 checksum=$(grep " $archive$" checksums.txt) && printf '%s\n' "$checksum" | shasum -a 256 -c -
 ```
 
 On Linux:
 
 ```sh
-archive=pushover_0.1.2_linux_amd64.tar.gz
+archive=pushover_0.1.3_linux_amd64.tar.gz
 checksum=$(grep " $archive$" checksums.txt) && printf '%s\n' "$checksum" | sha256sum --check -
 ```
 
 In Windows PowerShell:
 
 ```powershell
-$archive = "pushover_0.1.2_windows_amd64.zip"
+$archive = "pushover_0.1.3_windows_amd64.zip"
 $entry = Select-String -Path checksums.txt -Pattern (" " + [regex]::Escape($archive) + '$')
 if ($null -eq $entry) { throw "No checksum entry found for $archive" }
 $expected = ($entry.Line -split '\s+')[0].ToUpperInvariant()
@@ -87,7 +93,7 @@ gh attestation verify checksums.txt --repo jurgenj136/pushover-cli
 The portable Agent Skill is in `.claude/skills/pushover-cli/SKILL.md`. Skill
 version `0.1.0` requires CLI version `0.1.0` or newer. The skill does not
 install the native `pushover` binary. No Homebrew formula or release archive is
-claimed before the public `v0.1.2` release succeeds. From a clone, install only this
+claimed before the public `v0.1.3` release succeeds. From a clone, install only this
 skill for an agent with the pinned skills CLI:
 
 ```sh
@@ -95,7 +101,7 @@ npx --yes skills@1.5.9 add . --skill pushover-cli --agent codex --yes
 ```
 
 Omit `--skill pushover-cli` to install every discoverable skill in the
-repository. Inspect the installed policy before use. After the public `v0.1.2`
+repository. Inspect the installed policy before use. After the public `v0.1.3`
 release succeeds, install the published portable skill with:
 
 ```sh

@@ -12,14 +12,14 @@ import (
 	"github.com/jurgenj136/pushover-cli/internal/output"
 )
 
-const v012ReleaseHeading = "### Install v0.1.2 after the public release"
+const v013ReleaseHeading = "### Install v0.1.3 after the public release"
 
-var v012ReleaseSectionContracts = []string{
+var v013ReleaseSectionContracts = []string{
 	"brew install jurgenj136/tap/pushover",
-	"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.2",
+	"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.3",
 	"npx --yes skills@1.5.9 add jurgenj136/pushover-cli --skill pushover-cli --yes",
-	"pushover_0.1.2_<os>_<arch>.tar.gz",
-	"pushover_0.1.2_<os>_<arch>.zip",
+	"pushover_0.1.3_<os>_<arch>.tar.gz",
+	"pushover_0.1.3_<os>_<arch>.zip",
 	"shasum -a 256 -c -",
 	"sha256sum --check -",
 	"Get-FileHash -Algorithm SHA256",
@@ -101,52 +101,55 @@ func TestREADMEInstallCredentialsAndVersionContracts(t *testing.T) {
 	}
 }
 
-func TestREADMEKeepsV012ReleasePathsFutureGated(t *testing.T) {
+func TestREADMEKeepsV013ReleasePathsFutureGated(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 
 	requireText(t, readme, "README.md",
 		"`v0.1.0` is tagged, but its release workflow failed before publishing artifacts",
 		"`v0.1.1` was released, but its Darwin arm64 binary reported development metadata",
 		"its Homebrew publication pushed `Formula/pushover.rb` directly to the tap's `main` branch",
+		"`v0.1.2` was released, but versioned `go install` reported `version=dev` and `commit=unknown`",
 		"No supported release exists yet",
-		"Until the `v0.1.2` release workflow succeeds, a source build is the only supported installation path",
+		"Until the `v0.1.3` release workflow succeeds, a source build is the only supported installation path",
 		"Homebrew, release-archive, and versioned `go install` paths below become supported only after that public release succeeds; they do not exist yet",
+		"Release archives and Homebrew install a binary with linker-injected version, commit, and build date metadata.",
+		"Versioned `go install` discovers its version from Go module metadata; commit and build date may remain `unknown`.",
 		"checksums.txt",
 		"GitHub artifact attestations",
 	)
-	requireText(t, readme, "README.md", v012ReleaseSectionContracts...)
-	if err := validateV012ReleasePathPlacement(readme); err != nil {
+	requireText(t, readme, "README.md", v013ReleaseSectionContracts...)
+	if err := validateV013ReleasePathPlacement(readme); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("rejects a deliberate pre-gate release command", func(t *testing.T) {
 		const command = "brew install jurgenj136/tap/pushover"
-		mutated := strings.Replace(readme, v012ReleaseHeading, command+"\n\n"+v012ReleaseHeading, 1)
+		mutated := strings.Replace(readme, v013ReleaseHeading, command+"\n\n"+v013ReleaseHeading, 1)
 
-		if err := validateV012ReleasePathPlacement(mutated); err == nil {
-			t.Fatalf("validator accepted %q before %q", command, v012ReleaseHeading)
+		if err := validateV013ReleasePathPlacement(mutated); err == nil {
+			t.Fatalf("validator accepted %q before %q", command, v013ReleaseHeading)
 		}
 	})
 }
 
-func validateV012ReleasePathPlacement(readme string) error {
-	sectionStart := strings.Index(readme, v012ReleaseHeading)
+func validateV013ReleasePathPlacement(readme string) error {
+	sectionStart := strings.Index(readme, v013ReleaseHeading)
 	if sectionStart < 0 {
-		return fmt.Errorf("README.md is missing %q", v012ReleaseHeading)
+		return fmt.Errorf("README.md is missing %q", v013ReleaseHeading)
 	}
 	sectionEnd := len(readme)
-	if nextHeading := strings.Index(readme[sectionStart+len(v012ReleaseHeading):], "\n## "); nextHeading >= 0 {
-		sectionEnd = sectionStart + len(v012ReleaseHeading) + nextHeading
+	if nextHeading := strings.Index(readme[sectionStart+len(v013ReleaseHeading):], "\n## "); nextHeading >= 0 {
+		sectionEnd = sectionStart + len(v013ReleaseHeading) + nextHeading
 	}
 
 	section := readme[sectionStart:sectionEnd]
 	outsideSection := readme[:sectionStart] + readme[sectionEnd:]
-	for _, contract := range v012ReleaseSectionContracts {
+	for _, contract := range v013ReleaseSectionContracts {
 		if !strings.Contains(section, contract) {
 			return fmt.Errorf("README.md is missing release-section contract %q", contract)
 		}
 		if strings.Contains(outsideSection, contract) {
-			return fmt.Errorf("README.md contains release-section contract %q outside %q", contract, v012ReleaseHeading)
+			return fmt.Errorf("README.md contains release-section contract %q outside %q", contract, v013ReleaseHeading)
 		}
 	}
 	return nil
