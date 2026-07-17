@@ -10,11 +10,106 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jurgenj136/pushover-cli/internal/domain"
 )
+
+func TestInitializeAtomicallyAllowsOneCreator(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	stores := []*FileStore{NewFileStore(path), NewFileStore(path)}
+	values := []Config{validConfig(), validConfig()}
+	values[1].Profiles = map[string]Profile{"other": {Name: "other", TokenRef: "other-token"}}
+	values[1].DefaultProfile = "other"
+
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	var wait sync.WaitGroup
+	for index := range stores {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			errs[index] = stores[index].Initialize(context.Background(), values[index])
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+
+	succeeded, alreadyExists := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrAlreadyExists):
+			alreadyExists++
+		default:
+			t.Fatalf("unexpected initialization error: %v", err)
+		}
+	}
+	if succeeded != 1 || alreadyExists != 1 {
+		t.Fatalf("successes=%d already-exists=%d errors=%v", succeeded, alreadyExists, errs)
+	}
+	loaded, err := NewFileStore(path).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.DefaultProfile != "default" && loaded.DefaultProfile != "other" {
+		t.Fatalf("unexpected winner: %#v", loaded)
+	}
+}
+
+func TestInitializeDoesNotReplaceExistingConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	store := NewFileStore(path)
+	first, second := validConfig(), validConfig()
+	second.Profiles = map[string]Profile{"other": {Name: "other", TokenRef: "other-token"}}
+	second.DefaultProfile = "other"
+	if err := store.Initialize(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Initialize(context.Background(), second); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("err=%v, want ErrAlreadyExists", err)
+	}
+	loaded, err := store.Load(context.Background())
+	if err != nil || loaded.DefaultProfile != "default" {
+		t.Fatalf("loaded=%#v err=%v", loaded, err)
+	}
+}
+
+func TestInitializePublishesOnlyAfterSyncAndReportsDurability(t *testing.T) {
+	path := "/config/config.yaml"
+	filesystem := newFakeFS()
+	if err := NewFileStoreWith(path, filesystem, fixedClock{}).Initialize(context.Background(), validConfig()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mkdir", "chmod:/config", "openfile:/config/.config.yaml.123000000.tmp", "file.chmod:/config/.config.yaml.123000000.tmp", "write:/config/.config.yaml.123000000.tmp", "sync:/config/.config.yaml.123000000.tmp", "close:/config/.config.yaml.123000000.tmp", "link", "remove", "syncdir"}
+	if strings.Join(filesystem.events, "|") != strings.Join(want, "|") {
+		t.Fatalf("events=%v\nwant=%v", filesystem.events, want)
+	}
+
+	postPublish := newFakeFS()
+	postPublish.fail["syncdir"] = errors.New("directory flush")
+	err := NewFileStoreWith(path, postPublish, fixedClock{}).Initialize(context.Background(), validConfig())
+	if OutcomeOf(err) != AppliedDurabilityUnknown {
+		t.Fatalf("outcome=%s err=%v", OutcomeOf(err), err)
+	}
+	if _, exists := postPublish.contents[path]; !exists {
+		t.Fatal("published config should remain after directory sync failure")
+	}
+
+	prePublish := newFakeFS()
+	prePublish.fail["link"] = errors.New("link failed")
+	err = NewFileStoreWith(path, prePublish, fixedClock{}).Initialize(context.Background(), validConfig())
+	if OutcomeOf(err) != Unchanged {
+		t.Fatalf("outcome=%s err=%v", OutcomeOf(err), err)
+	}
+	if _, exists := prePublish.contents[path]; exists {
+		t.Fatal("configuration was visible after failed publication")
+	}
+}
 
 func TestLoadStrictSchemaAndNotFound(t *testing.T) {
 	path := "/config/config.yaml"
@@ -242,6 +337,21 @@ func (f *fakeFS) Rename(oldPath, newPath string) error {
 		f.contents[newPath] = data
 		delete(f.contents, oldPath)
 	}
+	return nil
+}
+func (f *fakeFS) Link(oldPath, newPath string) error {
+	f.events = append(f.events, "link")
+	if err := f.failed("link"); err != nil {
+		return err
+	}
+	if _, exists := f.contents[newPath]; exists {
+		return fs.ErrExist
+	}
+	data, exists := f.contents[oldPath]
+	if !exists {
+		return fs.ErrNotExist
+	}
+	f.contents[newPath] = append([]byte(nil), data...)
 	return nil
 }
 func (f *fakeFS) Chmod(path string, _ fs.FileMode) error {

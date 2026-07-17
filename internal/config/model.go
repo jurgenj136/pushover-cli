@@ -19,6 +19,10 @@ const CurrentSchemaVersion = 1
 // does not contain a path, which keeps it safe to expose in normal output.
 var ErrNotFound = errors.New("configuration not found")
 
+// ErrAlreadyExists means atomic initialization lost to another creator. The
+// existing configuration was not changed.
+var ErrAlreadyExists = errors.New("configuration already exists")
+
 type Backend struct {
 	Type     string            `yaml:"type"`
 	Metadata map[string]string `yaml:"metadata,omitempty"`
@@ -63,6 +67,14 @@ type Store interface {
 	Path() string
 }
 
+// Initializer atomically publishes a first configuration only when none
+// exists. Implementations must be safe across processes: exactly one
+// concurrent caller succeeds and losers return ErrAlreadyExists without
+// replacing the winner.
+type Initializer interface {
+	Initialize(context.Context, Config) error
+}
+
 type File interface {
 	io.Reader
 	io.Writer
@@ -76,6 +88,7 @@ type FileSystem interface {
 	Open(string) (File, error)
 	OpenFile(string, int, fs.FileMode) (File, error)
 	Rename(string, string) error
+	Link(string, string) error
 	Chmod(string, fs.FileMode) error
 	Remove(string) error
 	SyncDir(string) error

@@ -94,6 +94,10 @@ func (m *Manager) Bootstrap(ctx context.Context, input SetupInput) (SetupView, e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	initializer, ok := m.Config.(config.Initializer)
+	if !ok {
+		return SetupView{}, settingError("configuration_unavailable", "configuration is unavailable", apperror.CategoryConfig)
+	}
 	if _, err := m.Config.Load(ctx); err == nil {
 		return SetupView{}, settingError("configuration_already_exists", "configuration already exists", apperror.CategoryConfig)
 	} else if !errors.Is(err, config.ErrNotFound) {
@@ -134,8 +138,14 @@ func (m *Manager) Bootstrap(ctx context.Context, input SetupInput) (SetupView, e
 		}
 		return SetupView{}, settingError("setup_invalid", "setup input is invalid", apperror.CategoryValidation)
 	}
-	if err := m.commitStaged(ctx, config.Config{}, result, staged); err != nil {
-		return SetupView{}, err
+	if err := initializer.Initialize(ctx, result); err != nil {
+		if errors.Is(err, config.ErrAlreadyExists) {
+			if rollbackErr := m.rollback(staged); rollbackErr != nil {
+				return SetupView{}, rollbackErr
+			}
+			return SetupView{}, settingError("configuration_already_exists", "configuration already exists", apperror.CategoryConfig)
+		}
+		return SetupView{}, m.commitError(ctx, config.Config{}, result, staged, err)
 	}
 	view := SetupView{Profile: m.profileView(ctx, result, result.Profiles[input.Profile.Name]), Recipients: make([]RecipientView, 0, len(input.Recipients))}
 	for _, recipient := range input.Recipients {

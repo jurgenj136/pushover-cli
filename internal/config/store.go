@@ -29,11 +29,13 @@ func (osFileSystem) OpenFile(path string, flags int, mode fs.FileMode) (File, er
 	return os.OpenFile(path, flags, mode)
 }
 func (osFileSystem) Rename(oldPath, newPath string) error      { return os.Rename(oldPath, newPath) }
+func (osFileSystem) Link(oldPath, newPath string) error        { return os.Link(oldPath, newPath) }
 func (osFileSystem) Chmod(path string, mode fs.FileMode) error { return os.Chmod(path, mode) }
 func (osFileSystem) Remove(path string) error                  { return os.Remove(path) }
 
-// FileStore persists one single-writer configuration file. It intentionally
-// does not provide compare-and-swap: concurrent writers are outside v1 scope.
+// FileStore persists one configuration file. Commit remains a single-writer
+// replace operation; Initialize is the one cross-process-safe create-if-absent
+// operation and must be used for first-time setup.
 type FileStore struct {
 	path  string
 	fs    FileSystem
@@ -96,6 +98,88 @@ func (s *FileStore) Load(ctx context.Context) (Config, error) {
 		return Config{}, fmt.Errorf("configuration schema version %d is unsupported", config.SchemaVersion)
 	}
 	return s.migrateV0(ctx, data, config)
+}
+
+// Initialize atomically creates the first configuration without replacing a
+// concurrently published file. A hard-link publication gives POSIX and
+// Windows filesystems one create-if-absent operation after the temporary file
+// has been fully written, restricted, and synced.
+func (s *FileStore) Initialize(ctx context.Context, config Config) error {
+	if err := ctx.Err(); err != nil {
+		return NewCommitError(Unchanged, err)
+	}
+	if err := Validate(config); err != nil {
+		return NewCommitError(Unchanged, err)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		return NewCommitError(Unchanged, fmt.Errorf("encode configuration: %w", err))
+	}
+	parent := filepath.Dir(s.path)
+	if err := s.fs.MkdirAll(parent, 0o700); err != nil {
+		return NewCommitError(Unchanged, fmt.Errorf("create configuration directory: %w", err))
+	}
+	if err := s.fs.Chmod(parent, 0o700); err != nil {
+		return NewCommitError(Unchanged, fmt.Errorf("restrict configuration directory: %w", err))
+	}
+	if err := secureDirectory(parent); err != nil {
+		return NewCommitError(Unchanged, err)
+	}
+	temporaryBase := filepath.Join(parent, fmt.Sprintf(".%s.%d.tmp", filepath.Base(s.path), s.clock.Now().UTC().UnixNano()))
+	var temporary string
+	var file File
+	for attempt := 0; attempt < 256; attempt++ {
+		temporary = temporaryBase
+		if attempt != 0 {
+			temporary = fmt.Sprintf("%s.%d", temporaryBase, attempt)
+		}
+		file, err = s.fs.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if !errors.Is(err, fs.ErrExist) {
+			break
+		}
+	}
+	if err != nil {
+		return NewCommitError(Unchanged, fmt.Errorf("create temporary configuration: %w", err))
+	}
+	failed := func(stage string, cause error) error {
+		_ = file.Close()
+		_ = s.fs.Remove(temporary)
+		return NewCommitError(Unchanged, fmt.Errorf("%s: %w", stage, cause))
+	}
+	if err := file.Chmod(0o600); err != nil {
+		return failed("restrict temporary configuration", err)
+	}
+	if err := secureFile(temporary); err != nil {
+		return failed("restrict temporary configuration", err)
+	}
+	if err := writeAll(file, encoded); err != nil {
+		return failed("write temporary configuration", err)
+	}
+	if err := file.Sync(); err != nil {
+		return failed("sync temporary configuration", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = s.fs.Remove(temporary)
+		return NewCommitError(Unchanged, fmt.Errorf("close temporary configuration: %w", err))
+	}
+	if err := ctx.Err(); err != nil {
+		_ = s.fs.Remove(temporary)
+		return NewCommitError(Unchanged, err)
+	}
+	if err := s.fs.Link(temporary, s.path); err != nil {
+		_ = s.fs.Remove(temporary)
+		if errors.Is(err, fs.ErrExist) {
+			return ErrAlreadyExists
+		}
+		return NewCommitError(Unchanged, fmt.Errorf("initialize configuration: %w", err))
+	}
+	if err := s.fs.Remove(temporary); err != nil {
+		return NewCommitError(AppliedDurabilityUnknown, fmt.Errorf("remove temporary configuration: %w", err))
+	}
+	if err := s.fs.SyncDir(parent); err != nil {
+		return NewCommitError(AppliedDurabilityUnknown, fmt.Errorf("sync configuration directory: %w", err))
+	}
+	return nil
 }
 
 func (s *FileStore) Commit(ctx context.Context, config Config) error {

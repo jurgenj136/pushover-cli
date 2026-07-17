@@ -3,8 +3,10 @@ package settings
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jurgenj136/pushover-cli/internal/apperror"
@@ -40,6 +42,13 @@ func (s *settingsConfig) Commit(_ context.Context, value config.Config) error {
 	}
 	return s.commitErr
 }
+func (s *settingsConfig) Initialize(_ context.Context, value config.Config) error {
+	s.commits++
+	if s.applyOnCommit || s.commitErr == nil {
+		s.value = config.Clone(value)
+	}
+	return s.commitErr
+}
 func (s *settingsConfig) Path() string { return "" }
 
 type settingsSecrets struct {
@@ -50,6 +59,9 @@ type settingsSecrets struct {
 	puts, gets, checks int
 	deleted            []domain.SecretRef
 	lastGet            []byte
+	blockAfterChecks   int
+	ready              chan<- struct{}
+	release            <-chan struct{}
 }
 
 func (s *settingsSecrets) Get(_ context.Context, ref domain.SecretRef) ([]byte, error) {
@@ -85,6 +97,10 @@ func (s *settingsSecrets) Check(_ context.Context, ref domain.SecretRef) error {
 	s.checks++
 	if _, ok := s.values[ref]; !ok {
 		return errors.New("missing")
+	}
+	if s.blockAfterChecks != 0 && s.checks == s.blockAfterChecks {
+		s.ready <- struct{}{}
+		<-s.release
 	}
 	return nil
 }
@@ -265,6 +281,47 @@ func TestBootstrapStagesAllSecretsAndCommitsOneValidInitialConfiguration(t *test
 	input.Backend.Metadata["identity"] = "changed"
 	if configuration.value.Backend.Metadata["identity"] != "local" {
 		t.Fatalf("backend metadata was not copied: %#v", configuration.value.Backend.Metadata)
+	}
+}
+
+func TestConcurrentBootstrapAcrossManagersHasOneWinnerAndCleansLoserSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	ready := make(chan struct{}, 2)
+	release := make(chan struct{})
+	stores := []*settingsSecrets{
+		{values: map[domain.SecretRef][]byte{}, blockAfterChecks: 2, ready: ready, release: release},
+		{values: map[domain.SecretRef][]byte{}, blockAfterChecks: 2, ready: ready, release: release},
+	}
+	errs := make([]error, 2)
+	var wait sync.WaitGroup
+	for index := range stores {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			_, errs[index] = (&Manager{Config: config.NewFileStore(path), Secrets: stores[index]}).Bootstrap(context.Background(), SetupInput{
+				Backend:    config.Backend{Type: "native"},
+				Profile:    ProfileInput{Name: "profile" + string(rune('a'+index)), Token: profileToken()},
+				Recipients: []RecipientInput{{Alias: "recipient" + string(rune('a'+index)), UserKey: userKey()}},
+			})
+		}(index)
+	}
+	<-ready
+	<-ready
+	close(release)
+	wait.Wait()
+
+	winner, loser := -1, -1
+	for index, err := range errs {
+		if err == nil {
+			winner = index
+		} else if codeOf(err) == "configuration_already_exists" {
+			loser = index
+		} else {
+			t.Fatalf("unexpected bootstrap error %d: %v", index, err)
+		}
+	}
+	if winner < 0 || loser < 0 || len(stores[winner].values) != 2 || len(stores[loser].values) != 0 || len(stores[loser].deleted) != 2 {
+		t.Fatalf("winner=%d loser=%d errors=%v values=(%d,%d) deleted=(%v,%v)", winner, loser, errs, len(stores[0].values), len(stores[1].values), stores[0].deleted, stores[1].deleted)
 	}
 }
 
