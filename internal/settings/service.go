@@ -435,26 +435,31 @@ func (m *Manager) commitError(ctx context.Context, before, after config.Config, 
 		if cleanupErr := m.rollback(staged); cleanupErr != nil {
 			return cleanupErr
 		}
-		return settingError("configuration_commit_failed", "configuration could not be updated", apperror.CategoryConfig)
+		return apperror.Wrap("configuration_commit_failed", apperror.CategoryConfig, "configuration could not be updated", commitErr)
 	}
 	// After a post-rename failure, only a reload can show which references are
 	// currently live. If reload itself fails, retain all staged values: deleting
 	// them could create dangling visible configuration.
-	visible, err := m.Config.Load(ctx)
-	if err == nil {
-		cleanupFailed := false
+	visible, reloadErr := m.Config.Load(ctx)
+	if reloadErr == nil {
+		var cleanupErr error
 		for _, ref := range staged {
-			if !references(visible, ref) && m.Secrets.Delete(context.Background(), ref) != nil {
-				cleanupFailed = true
+			if !references(visible, ref) {
+				if err := m.Secrets.Delete(context.Background(), ref); err != nil && cleanupErr == nil {
+					cleanupErr = err
+				}
 			}
 		}
-		if cleanupFailed {
-			return settingError("secret_cleanup_required", "configuration durability is unknown and secret cleanup is required", apperror.CategoryConfig)
+		if cleanupErr != nil {
+			return apperror.Wrap("secret_cleanup_required", apperror.CategoryConfig, "configuration durability is unknown and secret cleanup is required", cleanupErr)
 		}
 	}
 	_ = before
 	_ = after
-	return settingError("configuration_durability_unknown", "configuration update durability is unknown", apperror.CategoryConfig)
+	if reloadErr != nil {
+		commitErr = errors.Join(commitErr, reloadErr)
+	}
+	return apperror.Wrap("configuration_durability_unknown", apperror.CategoryConfig, "configuration update durability is unknown", commitErr)
 }
 func (m *Manager) rollback(refs []domain.SecretRef) error {
 	seen := map[domain.SecretRef]bool{}

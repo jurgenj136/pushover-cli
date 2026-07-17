@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -192,6 +193,54 @@ func TestUnknownConfigCommitReconcilesStagedSecretsConservatively(t *testing.T) 
 			_, err := (&Manager{Config: configuration, Secrets: secret}).AddProfile(context.Background(), ProfileInput{Name: "p", Token: profileToken()})
 			if codeOf(err) != test.wantCode || len(secret.deleted) != test.wantDelete || len(secret.values) != test.wantValues {
 				t.Fatalf("err=%v deleted=%v values=%v", err, secret.deleted, secret.values)
+			}
+		})
+	}
+}
+
+func TestCommitErrorsRetainDiagnosisWithoutRenderingCauses(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		outcome     config.CommitOutcome
+		reloadCause error
+		wantCode    string
+		wantMessage string
+	}{
+		{"unchanged", config.Unchanged, nil, "configuration_commit_failed", "configuration could not be updated"},
+		{"durability unknown", config.AppliedDurabilityUnknown, nil, "configuration_durability_unknown", "configuration update durability is unknown"},
+		{"reload failure", config.AppliedDurabilityUnknown, errors.New("reload-cause-marker /private/secret/settings.yaml"), "configuration_durability_unknown", "configuration update durability is unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			commitCause := errors.New("commit-cause-marker PUSHOVER_TOKEN=secret")
+			configuration := &settingsConfig{
+				value:         baseSettingsConfig(),
+				commitErr:     config.NewCommitError(test.outcome, commitCause),
+				loadErr:       test.reloadCause,
+				failLoadAfter: 1,
+			}
+			secret := &settingsSecrets{values: map[domain.SecretRef][]byte{}}
+			_, err := (&Manager{Config: configuration, Secrets: secret}).AddProfile(context.Background(), ProfileInput{Name: "p", Token: profileToken()})
+			if !errors.Is(err, commitCause) {
+				t.Fatalf("error does not retain commit cause: %v", err)
+			}
+			if test.reloadCause != nil && !errors.Is(err, test.reloadCause) {
+				t.Fatalf("error does not retain reload cause: %v", err)
+			}
+			var commitErr *config.CommitError
+			if !errors.As(err, &commitErr) || commitErr.Outcome != test.outcome {
+				t.Fatalf("error does not retain commit diagnosis: %#v", commitErr)
+			}
+			detail := apperror.SafeDetail(err)
+			if detail == nil || detail.Code != test.wantCode || detail.Category != apperror.CategoryConfig || detail.Message != test.wantMessage || detail.Retryable || detail.Ambiguous {
+				t.Fatalf("safe detail = %#v", detail)
+			}
+			for _, format := range []string{"%v", "%+v", "%#v", "%q"} {
+				rendered := fmt.Sprintf(format, err)
+				for _, marker := range []string{"commit-cause-marker", "reload-cause-marker", "PUSHOVER_TOKEN", "/private/secret"} {
+					if strings.Contains(rendered, marker) {
+						t.Fatalf("%s leaked %q in %q", format, marker, rendered)
+					}
+				}
 			}
 		})
 	}
