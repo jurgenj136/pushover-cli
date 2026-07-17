@@ -41,11 +41,32 @@ Archive names are `pushover_0.1.0_<os>_<arch>.tar.gz` on macOS and Linux, and
 `pushover_0.1.0_<os>_<arch>.zip` on Windows.
 
 Before extracting an archive, verify the downloaded archive against the
-published checksum. Replace the value below with the archive you downloaded:
+published checksum. Use the command for your operating system from the
+directory containing the archive and `checksums.txt`.
+
+On macOS, replace the archive name with the file you downloaded:
 
 ```sh
 archive=pushover_0.1.0_darwin_arm64.tar.gz
 checksum=$(grep " $archive$" checksums.txt) && printf '%s\n' "$checksum" | shasum -a 256 -c -
+```
+
+On Linux:
+
+```sh
+archive=pushover_0.1.0_linux_amd64.tar.gz
+checksum=$(grep " $archive$" checksums.txt) && printf '%s\n' "$checksum" | sha256sum --check -
+```
+
+In Windows PowerShell:
+
+```powershell
+$archive = "pushover_0.1.0_windows_amd64.zip"
+$entry = Select-String -Path checksums.txt -Pattern (" " + [regex]::Escape($archive) + '$')
+if ($null -eq $entry) { throw "No checksum entry found for $archive" }
+$expected = ($entry.Line -split '\s+')[0].ToUpperInvariant()
+$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
+if ($actual -ne $expected) { throw "Checksum verification failed for $archive" }
 ```
 
 The release workflow also publishes GitHub artifact attestations for every

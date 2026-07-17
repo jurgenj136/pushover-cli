@@ -1,6 +1,7 @@
 package doctest
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,21 @@ import (
 
 	"github.com/jurgenj136/pushover-cli/internal/output"
 )
+
+const v010ReleaseHeading = "### Install v0.1.0 after the public release"
+
+var v010ReleaseSectionContracts = []string{
+	"brew install jurgenj136/tap/pushover",
+	"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.0",
+	"npx skills add jurgenj136/pushover-cli --skill pushover-cli",
+	"pushover_0.1.0_<os>_<arch>.tar.gz",
+	"pushover_0.1.0_<os>_<arch>.zip",
+	"shasum -a 256 -c -",
+	"sha256sum --check -",
+	"Get-FileHash -Algorithm SHA256",
+	"gh attestation verify \"$archive\" --repo jurgenj136/pushover-cli",
+	"gh attestation verify checksums.txt --repo jurgenj136/pushover-cli",
+}
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
@@ -92,12 +108,45 @@ func TestREADMEKeepsV010ReleasePathsFutureGated(t *testing.T) {
 		"`v0.1.0` has not been published",
 		"Until its public tag exists and the release workflow succeeds, a source build is the only supported installation path",
 		"Homebrew, release-archive, and versioned `go install` paths below become supported only after that public release succeeds; they do not exist yet",
-		"brew install jurgenj136/tap/pushover",
-		"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.0",
 		"checksums.txt",
 		"GitHub artifact attestations",
-		"npx skills add jurgenj136/pushover-cli --skill pushover-cli",
 	)
+	requireText(t, readme, "README.md", v010ReleaseSectionContracts...)
+	if err := validateV010ReleasePathPlacement(readme); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("rejects a deliberate pre-gate release command", func(t *testing.T) {
+		const command = "brew install jurgenj136/tap/pushover"
+		mutated := strings.Replace(readme, v010ReleaseHeading, command+"\n\n"+v010ReleaseHeading, 1)
+
+		if err := validateV010ReleasePathPlacement(mutated); err == nil {
+			t.Fatalf("validator accepted %q before %q", command, v010ReleaseHeading)
+		}
+	})
+}
+
+func validateV010ReleasePathPlacement(readme string) error {
+	sectionStart := strings.Index(readme, v010ReleaseHeading)
+	if sectionStart < 0 {
+		return fmt.Errorf("README.md is missing %q", v010ReleaseHeading)
+	}
+	sectionEnd := len(readme)
+	if nextHeading := strings.Index(readme[sectionStart+len(v010ReleaseHeading):], "\n## "); nextHeading >= 0 {
+		sectionEnd = sectionStart + len(v010ReleaseHeading) + nextHeading
+	}
+
+	section := readme[sectionStart:sectionEnd]
+	outsideSection := readme[:sectionStart] + readme[sectionEnd:]
+	for _, contract := range v010ReleaseSectionContracts {
+		if !strings.Contains(section, contract) {
+			return fmt.Errorf("README.md is missing release-section contract %q", contract)
+		}
+		if strings.Contains(outsideSection, contract) {
+			return fmt.Errorf("README.md contains release-section contract %q outside %q", contract, v010ReleaseHeading)
+		}
+	}
+	return nil
 }
 
 func TestPublicDocsContainNoCredentialEchoExample(t *testing.T) {
