@@ -188,10 +188,11 @@ func TestSendRequestConstructionFailureIsDefinitivelyUnsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Send(nil, domain.TargetPayload{
-		Target:  domain.Target{Credentials: domain.Credentials{Token: testToken, UserKey: testUser}},
-		Message: domain.Message{Body: "body"},
-	})
+	_, err = client.Send(nil, //nolint:staticcheck // deliberate nil context tests request-construction failure
+		domain.TargetPayload{
+			Target:  domain.Target{Credentials: domain.Credentials{Token: testToken, UserKey: testUser}},
+			Message: domain.Message{Body: "body"},
+		})
 	var send *SendError
 	if !errors.As(err, &send) || send.TransmissionPossible || send.Phase != PhaseBeforeDial || transport.calls != 0 {
 		t.Fatalf("send error = %#v calls = %d", err, transport.calls)
