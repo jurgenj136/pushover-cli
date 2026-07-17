@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"filippo.io/age"
+	"github.com/jurgenj136/pushover-cli/internal/apperror"
 	"github.com/jurgenj136/pushover-cli/internal/config"
 	"github.com/jurgenj136/pushover-cli/internal/domain"
 )
@@ -173,6 +174,10 @@ func formatRedactedError(state fmt.State, verb rune, message string) {
 
 var errTooLarge = errors.New("secret storage exceeds size limit")
 
+func missingIdentity() error {
+	return apperror.New("secret_identity_missing", apperror.CategoryConfig, "encrypted secret-store identity is missing")
+}
+
 func (s *AgeStore) Get(ctx context.Context, ref domain.SecretRef) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -253,7 +258,7 @@ func (s *AgeStore) load(ctx context.Context) (map[string][]byte, error) {
 	if err != nil {
 		return nil, unavailable(err)
 	}
-	identity, _, clearCredentials, err := s.credentials(ctx)
+	identity, _, clearCredentials, err := s.credentials(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +285,7 @@ func (s *AgeStore) save(ctx context.Context, values map[string][]byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, recipient, clearCredentials, err := s.credentials(ctx)
+	_, recipient, clearCredentials, err := s.credentials(ctx, true)
 	if err != nil {
 		return err
 	}
@@ -364,7 +369,7 @@ func (s *AgeStore) save(ctx context.Context, values map[string][]byte) error {
 	return nil
 }
 
-func (s *AgeStore) credentials(ctx context.Context) (age.Identity, age.Recipient, func(), error) {
+func (s *AgeStore) credentials(ctx context.Context, allowIdentityCreate bool) (age.Identity, age.Recipient, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, func() {}, err
 	}
@@ -394,6 +399,9 @@ func (s *AgeStore) credentials(ctx context.Context) (age.Identity, age.Recipient
 	}
 	data, err := s.fs.ReadFileLimited(s.identityPath, 1024)
 	if errors.Is(err, os.ErrNotExist) {
+		if !allowIdentityCreate {
+			return nil, nil, func() {}, missingIdentity()
+		}
 		// Identity creation is reachable only after AgeFactory accepted the
 		// caller's explicit AllowIdentity authorization and identity mode.
 		generated, generateErr := age.GenerateX25519Identity()

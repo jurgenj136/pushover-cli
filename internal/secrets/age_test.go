@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jurgenj136/pushover-cli/internal/apperror"
 	"github.com/jurgenj136/pushover-cli/internal/config"
 )
 
@@ -107,6 +108,87 @@ func TestAgeIdentityModeCreatesOnlyAfterExplicitAuthorization(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("identity mode = %o", info.Mode().Perm())
+	}
+}
+
+func TestAgeIdentityModeExistingMapWithoutIdentityFailsSafely(t *testing.T) {
+	dir := t.TempDir()
+	backend := config.Backend{Type: "file", Metadata: map[string]string{"mode": "identity"}}
+	seed, err := (AgeFactory{DataDir: dir, AllowIdentity: true}).Open(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := seed.Put(context.Background(), []byte("secret-material-should-never-render"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, identityFileName)); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := (AgeFactory{DataDir: dir, AllowIdentity: true}).Open(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Get(context.Background(), ref)
+	if err == nil {
+		t.Fatal("missing identity accepted an existing encrypted map")
+	}
+	if detail := apperror.SafeDetail(err); detail.Code != "secret_identity_missing" || detail.Category != apperror.CategoryConfig || detail.Message != "encrypted secret-store identity is missing" {
+		t.Fatalf("missing identity error = %#v", detail)
+	}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%q"} {
+		rendered := fmt.Sprintf(verb, err)
+		if strings.Contains(rendered, dir) || strings.Contains(rendered, "secret-material-should-never-render") {
+			t.Fatalf("format %s leaked sensitive data: %q", verb, rendered)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, identityFileName)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("missing identity was recreated: %v", statErr)
+	}
+}
+
+func TestAgeIdentityModeFirstUseInitializesMapAndIdentity(t *testing.T) {
+	dir := t.TempDir()
+	backend := config.Backend{Type: "file", Metadata: map[string]string{"mode": "identity"}}
+	store, err := (AgeFactory{DataDir: dir, AllowIdentity: true}).Open(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Put(context.Background(), []byte("first-use-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(dir, ageFileName), filepath.Join(dir, identityFileName)} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("first use did not create %s: %v", filepath.Base(path), err)
+		}
+	}
+	value, err := store.Get(context.Background(), ref)
+	if err != nil || string(value) != "first-use-secret" {
+		t.Fatalf("first-use value = %q, %v", value, err)
+	}
+}
+
+func TestAgeIdentityModeExistingMapAndIdentityLoad(t *testing.T) {
+	dir := t.TempDir()
+	backend := config.Backend{Type: "file", Metadata: map[string]string{"mode": "identity"}}
+	seed, err := (AgeFactory{DataDir: dir, AllowIdentity: true}).Open(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := seed.Put(context.Background(), []byte("persisted-identity-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := (AgeFactory{DataDir: dir, AllowIdentity: true}).Open(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := store.Get(context.Background(), ref)
+	if err != nil || string(value) != "persisted-identity-secret" {
+		t.Fatalf("loaded value = %q, %v", value, err)
 	}
 }
 
