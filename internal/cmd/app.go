@@ -6,6 +6,7 @@ import (
 
 	"github.com/jurgenj136/pushover-cli/internal/apperror"
 	"github.com/jurgenj136/pushover-cli/internal/attachment"
+	"github.com/jurgenj136/pushover-cli/internal/buildinfo"
 	"github.com/jurgenj136/pushover-cli/internal/config"
 	"github.com/jurgenj136/pushover-cli/internal/delivery"
 	"github.com/jurgenj136/pushover-cli/internal/e2ee"
@@ -15,7 +16,20 @@ import (
 	"github.com/jurgenj136/pushover-cli/internal/pushover"
 	"github.com/jurgenj136/pushover-cli/internal/resolver"
 	"github.com/jurgenj136/pushover-cli/internal/secrets"
+	"github.com/jurgenj136/pushover-cli/internal/settings"
 )
+
+// AdminDependencies is the injectable runtime graph for setup, profile,
+// recipient, auth, and introspection commands. Production values are made
+// lazily so help, completion, and version remain side-effect-free.
+type AdminDependencies struct {
+	Settings        settings.Service
+	Config          config.Store
+	SecretFactory   secrets.Factory
+	BackendMigrator *secrets.BackendMigrator
+	API             pushover.Client
+	Build           buildinfo.Info
+}
 
 // Dependencies are the command's runtime graph. Tests may inject concrete
 // preflight and delivery implementations; production construction remains
@@ -26,11 +40,14 @@ type Dependencies struct {
 	Output     output.Factory
 	Operations operation.Factory
 	Signals    <-chan os.Signal
+	Admin      AdminDependencies
+	Prompter   Prompter
 
 	// runtime and lookupEnv deliberately remain package-private. They allow
 	// production construction to be genuinely lazy and keep tests hermetic
 	// without changing the public dependency contract.
 	runtime   runtimeFactory
+	admin     adminFactory
 	lookupEnv func(string) (string, bool)
 }
 
@@ -40,11 +57,15 @@ type runtimeFactory func(context.Context, operation.Scope) (preflight.Builder, d
 // does not resolve paths, load configuration, open a secret store, or create a
 // transport. Those effects are reserved for a parsed and structurally valid
 // command that actually needs to send.
-func NewProductionDependencies(_ context.Context, _ IO) (Dependencies, error) {
+func NewProductionDependencies(_ context.Context, streams IO) (Dependencies, error) {
+	streams = normalizeIO(streams)
+	prompter := TerminalPrompter{Input: streams.In, Stderr: streams.Err, IsTTY: terminalInput(streams)}
 	return Dependencies{
 		Output:     output.NewFactory(),
 		Operations: operation.Factory{},
 		runtime:    productionRuntime,
+		Prompter:   prompter,
+		admin:      productionAdminFactory(prompter),
 		lookupEnv:  os.LookupEnv,
 	}, nil
 }
