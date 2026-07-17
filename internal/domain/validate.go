@@ -58,6 +58,7 @@ func ValidateE2EEKey(key []byte) error {
 	if _, err := hex.Decode(decoded, key); err != nil {
 		return invalid("encryption key", "must be 64 hexadecimal characters")
 	}
+	defer clear(decoded)
 	return nil
 }
 
