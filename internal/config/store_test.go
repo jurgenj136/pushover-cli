@@ -79,6 +79,44 @@ func TestInitializeDoesNotReplaceExistingConfiguration(t *testing.T) {
 	}
 }
 
+func TestInitializeAlreadyExistsRequiresTemporaryCleanup(t *testing.T) {
+	const (
+		path      = "/config/config.yaml"
+		temporary = "/config/.config.yaml.123000000.tmp"
+	)
+	for _, test := range []struct {
+		name       string
+		removeErr  error
+		wantExists bool
+	}{
+		{name: "cleanup succeeds"},
+		{name: "cleanup fails", removeErr: errors.New("remove failed"), wantExists: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			filesystem := newFakeFS()
+			filesystem.contents[path] = []byte("winner")
+			filesystem.fail["remove"] = test.removeErr
+			err := NewFileStoreWith(path, filesystem, fixedClock{}).Initialize(context.Background(), validConfig())
+			if test.removeErr == nil {
+				if !errors.Is(err, ErrAlreadyExists) {
+					t.Fatalf("err=%v, want ErrAlreadyExists", err)
+				}
+			} else {
+				if errors.Is(err, ErrAlreadyExists) || OutcomeOf(err) != Unchanged {
+					t.Fatalf("err=%v outcome=%s", err, OutcomeOf(err))
+				}
+			}
+			_, exists := filesystem.contents[temporary]
+			if exists != test.wantExists {
+				t.Fatalf("temporary exists=%t, want %t", exists, test.wantExists)
+			}
+			if got := string(filesystem.contents[path]); got != "winner" {
+				t.Fatalf("winner changed: %q", got)
+			}
+		})
+	}
+}
+
 func TestInitializePublishesOnlyAfterSyncAndReportsDurability(t *testing.T) {
 	path := "/config/config.yaml"
 	filesystem := newFakeFS()
@@ -360,8 +398,11 @@ func (f *fakeFS) Chmod(path string, _ fs.FileMode) error {
 }
 func (f *fakeFS) Remove(path string) error {
 	f.events = append(f.events, "remove")
+	if err := f.failed("remove"); err != nil {
+		return err
+	}
 	delete(f.contents, path)
-	return f.failed("remove")
+	return nil
 }
 func (f *fakeFS) SyncDir(string) error {
 	f.events = append(f.events, "syncdir")

@@ -167,7 +167,9 @@ func (s *FileStore) Initialize(ctx context.Context, config Config) error {
 		return NewCommitError(Unchanged, err)
 	}
 	if err := s.fs.Link(temporary, s.path); err != nil {
-		_ = s.fs.Remove(temporary)
+		if cleanupErr := s.fs.Remove(temporary); cleanupErr != nil {
+			return NewCommitError(Unchanged, fmt.Errorf("remove temporary configuration: %w", cleanupErr))
+		}
 		if errors.Is(err, fs.ErrExist) {
 			return ErrAlreadyExists
 		}
