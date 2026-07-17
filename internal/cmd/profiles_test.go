@@ -30,6 +30,17 @@ func TestExecuteProfilesListJSON(t *testing.T) {
 	}
 }
 
+func TestProfilesListCanceledParentDoesNotCallSettings(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	service := &adminSettingsFake{}
+	var stdout, stderr bytes.Buffer
+	got := Execute(ctx, []string{"profiles", "list"}, testIO(&stdout, &stderr), Dependencies{Admin: AdminDependencies{Settings: service}})
+	if got != 6 || len(service.calls) != 0 {
+		t.Fatalf("exit=%d settings calls=%v stdout=%q stderr=%q", got, service.calls, stdout.String(), stderr.String())
+	}
+}
+
 func TestProfilesOutputProbe(t *testing.T) {
 	var out bytes.Buffer
 	err := (output.JSONRenderer{}).Result(&out, output.ProfilesResult{Meta: output.Meta{Command: "profiles list", Status: "success"}, Rows: []output.ProfileRow{{Name: "work", Default: true}}})
