@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -150,11 +151,25 @@ type ageDurabilityError struct{ cause error }
 
 func (e *ageDurabilityError) Error() string { return "secret storage durability is unknown" }
 func (e *ageDurabilityError) Unwrap() error { return e.cause }
+func (e *ageDurabilityError) Format(state fmt.State, verb rune) {
+	formatRedactedError(state, verb, e.Error())
+}
 
 type identityDurabilityError struct{ cause error }
 
 func (e *identityDurabilityError) Error() string { return "identity storage durability is unknown" }
 func (e *identityDurabilityError) Unwrap() error { return e.cause }
+func (e *identityDurabilityError) Format(state fmt.State, verb rune) {
+	formatRedactedError(state, verb, e.Error())
+}
+
+func formatRedactedError(state fmt.State, verb rune, message string) {
+	if verb == 'q' {
+		_, _ = fmt.Fprintf(state, "%q", message)
+		return
+	}
+	_, _ = io.WriteString(state, message)
+}
 
 var errTooLarge = errors.New("secret storage exceeds size limit")
 

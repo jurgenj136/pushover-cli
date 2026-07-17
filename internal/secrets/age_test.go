@@ -3,6 +3,8 @@ package secrets
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -240,5 +242,49 @@ func TestIdentityDurabilityFailureDoesNotReturnSecretRef(t *testing.T) {
 	ref, err := store.Put(context.Background(), []byte("value"))
 	if err == nil || ref != "" {
 		t.Fatalf("identity durability result ref=%q err=%v", ref, err)
+	}
+}
+
+func TestDurabilityErrorsFormattingNeverLeaksWrappedCause(t *testing.T) {
+	marker := "/Users/alice/.config/pushover-cli/secret-marker"
+	cause := errors.New(marker)
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "age",
+			err:  &ageDurabilityError{cause: cause},
+			want: "secret storage durability is unknown",
+		},
+		{
+			name: "identity",
+			err:  &identityDurabilityError{cause: cause},
+			want: "identity storage durability is unknown",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, verb := range []string{"%v", "%+v", "%#v", "%q"} {
+				rendered := fmt.Sprintf(verb, test.err)
+				want := test.want
+				if verb == "%q" {
+					want = fmt.Sprintf("%q", want)
+				}
+				if rendered != want {
+					t.Fatalf("format %s = %q, want %q", verb, rendered, want)
+				}
+				if strings.Contains(rendered, marker) {
+					t.Fatalf("format %s leaked wrapped cause: %q", verb, rendered)
+				}
+			}
+			if !errors.Is(test.err, cause) {
+				t.Fatal("durability error must retain its wrapped cause")
+			}
+			if got := errors.Unwrap(test.err); got != cause {
+				t.Fatalf("Unwrap() = %v, want %v", got, cause)
+			}
+		})
 	}
 }
