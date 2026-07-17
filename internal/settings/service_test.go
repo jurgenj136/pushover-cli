@@ -55,17 +55,25 @@ type settingsSecrets struct {
 	values             map[domain.SecretRef][]byte
 	putRef             domain.SecretRef
 	putErr, deleteErr  error
+	getErr             error
 	failPutAt          int
 	puts, gets, checks int
 	deleted            []domain.SecretRef
+	getRefs            []domain.SecretRef
+	getCtx             context.Context
 	lastGet            []byte
 	blockAfterChecks   int
 	ready              chan<- struct{}
 	release            <-chan struct{}
 }
 
-func (s *settingsSecrets) Get(_ context.Context, ref domain.SecretRef) ([]byte, error) {
+func (s *settingsSecrets) Get(ctx context.Context, ref domain.SecretRef) ([]byte, error) {
 	s.gets++
+	s.getRefs = append(s.getRefs, ref)
+	s.getCtx = ctx
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	value, ok := s.values[ref]
 	if !ok {
 		return nil, errors.New("secret is unavailable")
@@ -458,5 +466,65 @@ func TestSelectedProfileTokenReturnsOwnedSelectedOrDefaultCopy(t *testing.T) {
 	}
 	if _, err := manager.SelectedProfileToken(context.Background(), "missing"); codeOf(err) != "profile_missing" {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestRecipientUserKeyReturnsOwnedCopyAndFetchesOnlyUserKey(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig()}
+	configuration.value.Recipients = map[string]config.Recipient{
+		"alice": {Alias: "alice", UserKeyRef: "user-key", E2EEKeyRef: "e2ee-key"},
+	}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{
+		"user-key": userKey(),
+		"e2ee-key": []byte(strings.Repeat("c", 64)),
+	}}
+	manager := &Manager{Config: configuration, Secrets: secret}
+
+	got, err := manager.RecipientUserKey(context.Background(), "alice")
+	if err != nil || string(got) != string(userKey()) {
+		t.Fatalf("key=%q err=%v", got, err)
+	}
+	if secret.gets != 1 || len(secret.getRefs) != 1 || secret.getRefs[0] != "user-key" || secret.checks != 0 {
+		t.Fatalf("gets=%d refs=%v checks=%d", secret.gets, secret.getRefs, secret.checks)
+	}
+	for _, value := range secret.lastGet {
+		if value != 0 {
+			t.Fatal("intermediate secret buffer was not wiped")
+		}
+	}
+	got[0] = 'x'
+	if string(secret.values["user-key"]) == string(got) {
+		t.Fatal("key aliases secret store memory")
+	}
+}
+
+func TestRecipientUserKeyMissingAliasDoesNotReadSecrets(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig()}
+	configuration.value.Recipients = map[string]config.Recipient{
+		"alice": {Alias: "alice", UserKeyRef: "user-key"},
+	}
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{"user-key": userKey()}}
+
+	_, err := (&Manager{Config: configuration, Secrets: secret}).RecipientUserKey(context.Background(), "missing")
+	if codeOf(err) != "recipient_missing" || secret.gets != 0 {
+		t.Fatalf("err=%v gets=%d", err, secret.gets)
+	}
+	if strings.Contains(err.Error(), "user-key") || strings.Contains(err.Error(), "alice") {
+		t.Fatalf("error exposed secret or value: %v", err)
+	}
+}
+
+func TestRecipientUserKeyPropagatesContextAndReturnsTypedSecretError(t *testing.T) {
+	configuration := &settingsConfig{value: baseSettingsConfig()}
+	configuration.value.Recipients = map[string]config.Recipient{
+		"alice": {Alias: "alice", UserKeyRef: "user-key"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{"user-key": userKey()}, getErr: context.Canceled}
+
+	_, err := (&Manager{Config: configuration, Secrets: secret}).RecipientUserKey(ctx, "alice")
+	if codeOf(err) != "secret_store_unavailable" || secret.getCtx != ctx {
+		t.Fatalf("err=%v ctx=%p want=%p", err, secret.getCtx, ctx)
 	}
 }

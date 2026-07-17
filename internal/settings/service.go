@@ -77,6 +77,9 @@ type Service interface {
 	// SelectedProfileToken returns an owned copy of the selected or default
 	// profile token. The caller must wipe it when it is no longer needed.
 	SelectedProfileToken(context.Context, string) ([]byte, error)
+	// RecipientUserKey returns an owned copy of a recipient's user key. The
+	// caller must wipe it when it is no longer needed.
+	RecipientUserKey(context.Context, string) ([]byte, error)
 }
 
 type Manager struct {
@@ -371,6 +374,29 @@ func (m *Manager) SelectedProfileToken(ctx context.Context, name string) ([]byte
 	}
 	owned := append([]byte(nil), token...)
 	wipe(token)
+	return owned, nil
+}
+
+// RecipientUserKey returns an owned copy of the exact recipient user key.
+// Callers must wipe the returned bytes after use and must not retain them
+// beyond the authenticated operation. The recipient's E2EE key is never read.
+func (m *Manager) RecipientUserKey(ctx context.Context, alias string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	value, err := m.load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	recipient, ok := value.Recipients[alias]
+	if !ok {
+		return nil, settingError("recipient_missing", "recipient is unavailable", apperror.CategoryConfig)
+	}
+	key, err := m.Secrets.Get(ctx, recipient.UserKeyRef)
+	if err != nil {
+		return nil, settingError("secret_store_unavailable", "secret store is unavailable", apperror.CategoryConfig)
+	}
+	owned := append([]byte(nil), key...)
+	wipe(key)
 	return owned, nil
 }
 
