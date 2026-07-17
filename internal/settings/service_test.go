@@ -163,7 +163,7 @@ func TestRollbackDeleteFailureIsSurfaced(t *testing.T) {
 	configuration := &settingsConfig{value: baseSettingsConfig(), commitErr: config.NewCommitError(config.Unchanged, errors.New("no"))}
 	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{}, deleteErr: errors.New("offline")}
 	_, err := (&Manager{Config: configuration, Secrets: secret}).AddProfile(context.Background(), ProfileInput{Name: "p", Token: profileToken()})
-	if codeOf(err) != "configuration_commit_failed" {
+	if codeOf(err) != "secret_cleanup_required" {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -171,7 +171,7 @@ func TestRollbackAttemptsEveryStagedSecret(t *testing.T) {
 	configuration := &settingsConfig{value: baseSettingsConfig(), commitErr: config.NewCommitError(config.Unchanged, errors.New("no"))}
 	secret := &settingsSecrets{values: map[domain.SecretRef][]byte{}, deleteErr: errors.New("offline")}
 	_, err := (&Manager{Config: configuration, Secrets: secret}).AddRecipient(context.Background(), RecipientInput{Alias: "r", UserKey: userKey(), E2EEKey: []byte(strings.Repeat("c", 64))})
-	if codeOf(err) != "configuration_commit_failed" || len(secret.deleted) != 2 {
+	if codeOf(err) != "secret_cleanup_required" || len(secret.deleted) != 2 {
 		t.Fatalf("err=%v deleted=%v", err, secret.deleted)
 	}
 }
@@ -267,15 +267,15 @@ func TestCommitErrorsRetainCommitAndCleanupDiagnosisWithoutRenderingCauses(t *te
 				_, err := manager.AddRecipient(context.Background(), RecipientInput{Alias: "p", UserKey: userKey(), E2EEKey: []byte(strings.Repeat("c", 64))})
 				return err
 			},
-			wantCode:    "configuration_commit_failed",
-			wantMessage: "configuration could not be updated",
+			wantCode:    "secret_cleanup_required",
+			wantMessage: "secret cleanup is required",
 		},
 		{
 			name:         "durability unknown cleanup",
 			outcome:      config.AppliedDurabilityUnknown,
-			deleteCauses: []error{errors.New("delete-cleanup-marker /private/secret/cleanup")},
+			deleteCauses: []error{errors.New("delete-cleanup-first-marker /private/secret/cleanup"), errors.New("delete-cleanup-second-marker PUSHOVER_TOKEN=secret")},
 			add: func(manager *Manager) error {
-				_, err := manager.AddProfile(context.Background(), ProfileInput{Name: "p", Token: profileToken()})
+				_, err := manager.AddRecipient(context.Background(), RecipientInput{Alias: "p", UserKey: userKey(), E2EEKey: []byte(strings.Repeat("c", 64))})
 				return err
 			},
 			wantCode:    "secret_cleanup_required",
@@ -295,6 +295,9 @@ func TestCommitErrorsRetainCommitAndCleanupDiagnosisWithoutRenderingCauses(t *te
 					t.Fatalf("error does not retain deletion cause: %v", err)
 				}
 			}
+			if len(secret.deleted) != len(test.deleteCauses) {
+				t.Fatalf("deletion attempts=%d, want %d", len(secret.deleted), len(test.deleteCauses))
+			}
 			var commitErr *config.CommitError
 			if !errors.As(err, &commitErr) || commitErr.Outcome != test.outcome {
 				t.Fatalf("error does not retain commit diagnosis: %#v", commitErr)
@@ -305,7 +308,7 @@ func TestCommitErrorsRetainCommitAndCleanupDiagnosisWithoutRenderingCauses(t *te
 			}
 			for _, format := range []string{"%v", "%+v", "%#v", "%q"} {
 				rendered := fmt.Sprintf(format, err)
-				for _, marker := range []string{"commit-cleanup-cause-marker", "delete-first-marker", "delete-second-marker", "delete-cleanup-marker", "PUSHOVER_TOKEN", "/private/secret"} {
+				for _, marker := range []string{"commit-cleanup-cause-marker", "delete-first-marker", "delete-second-marker", "delete-cleanup-first-marker", "delete-cleanup-second-marker", "PUSHOVER_TOKEN", "/private/secret"} {
 					if strings.Contains(rendered, marker) {
 						t.Fatalf("%s leaked %q in %q", format, marker, rendered)
 					}

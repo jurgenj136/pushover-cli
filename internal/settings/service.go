@@ -433,7 +433,7 @@ func (m *Manager) commitStaged(ctx context.Context, before, after config.Config,
 func (m *Manager) commitError(ctx context.Context, before, after config.Config, staged []domain.SecretRef, commitErr error) error {
 	if config.OutcomeOf(commitErr) == config.Unchanged {
 		if cleanupErr := m.rollback(staged); cleanupErr != nil {
-			return apperror.Wrap("configuration_commit_failed", apperror.CategoryConfig, "configuration could not be updated", errors.Join(commitErr, cleanupErr))
+			return apperror.Wrap("secret_cleanup_required", apperror.CategoryConfig, "secret cleanup is required", errors.Join(commitErr, cleanupErr))
 		}
 		return apperror.Wrap("configuration_commit_failed", apperror.CategoryConfig, "configuration could not be updated", commitErr)
 	}
@@ -442,16 +442,16 @@ func (m *Manager) commitError(ctx context.Context, before, after config.Config, 
 	// them could create dangling visible configuration.
 	visible, reloadErr := m.Config.Load(ctx)
 	if reloadErr == nil {
-		var cleanupErr error
+		var cleanupCauses []error
 		for _, ref := range staged {
 			if !references(visible, ref) {
-				if err := m.Secrets.Delete(context.Background(), ref); err != nil && cleanupErr == nil {
-					cleanupErr = err
+				if err := m.Secrets.Delete(context.Background(), ref); err != nil {
+					cleanupCauses = append(cleanupCauses, err)
 				}
 			}
 		}
-		if cleanupErr != nil {
-			return apperror.Wrap("secret_cleanup_required", apperror.CategoryConfig, "configuration durability is unknown and secret cleanup is required", errors.Join(commitErr, cleanupErr))
+		if len(cleanupCauses) != 0 {
+			return apperror.Wrap("secret_cleanup_required", apperror.CategoryConfig, "configuration durability is unknown and secret cleanup is required", errors.Join(commitErr, errors.Join(cleanupCauses...)))
 		}
 	}
 	_ = before
