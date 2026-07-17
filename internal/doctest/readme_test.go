@@ -12,14 +12,14 @@ import (
 	"github.com/jurgenj136/pushover-cli/internal/output"
 )
 
-const v011ReleaseHeading = "### Install v0.1.1 after the public release"
+const v012ReleaseHeading = "### Install v0.1.2 after the public release"
 
-var v011ReleaseSectionContracts = []string{
+var v012ReleaseSectionContracts = []string{
 	"brew install jurgenj136/tap/pushover",
-	"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.1",
+	"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.2",
 	"npx --yes skills@1.5.9 add jurgenj136/pushover-cli --skill pushover-cli --yes",
-	"pushover_0.1.1_<os>_<arch>.tar.gz",
-	"pushover_0.1.1_<os>_<arch>.zip",
+	"pushover_0.1.2_<os>_<arch>.tar.gz",
+	"pushover_0.1.2_<os>_<arch>.zip",
 	"shasum -a 256 -c -",
 	"sha256sum --check -",
 	"Get-FileHash -Algorithm SHA256",
@@ -101,50 +101,52 @@ func TestREADMEInstallCredentialsAndVersionContracts(t *testing.T) {
 	}
 }
 
-func TestREADMEKeepsV011ReleasePathsFutureGated(t *testing.T) {
+func TestREADMEKeepsV012ReleasePathsFutureGated(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 
 	requireText(t, readme, "README.md",
 		"`v0.1.0` is tagged, but its release workflow failed before publishing artifacts",
+		"`v0.1.1` was released, but its Darwin arm64 binary reported development metadata",
+		"its Homebrew publication pushed `Formula/pushover.rb` directly to the tap's `main` branch",
 		"No supported release exists yet",
-		"Until the `v0.1.1` release workflow succeeds, a source build is the only supported installation path",
+		"Until the `v0.1.2` release workflow succeeds, a source build is the only supported installation path",
 		"Homebrew, release-archive, and versioned `go install` paths below become supported only after that public release succeeds; they do not exist yet",
 		"checksums.txt",
 		"GitHub artifact attestations",
 	)
-	requireText(t, readme, "README.md", v011ReleaseSectionContracts...)
-	if err := validateV011ReleasePathPlacement(readme); err != nil {
+	requireText(t, readme, "README.md", v012ReleaseSectionContracts...)
+	if err := validateV012ReleasePathPlacement(readme); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("rejects a deliberate pre-gate release command", func(t *testing.T) {
 		const command = "brew install jurgenj136/tap/pushover"
-		mutated := strings.Replace(readme, v011ReleaseHeading, command+"\n\n"+v011ReleaseHeading, 1)
+		mutated := strings.Replace(readme, v012ReleaseHeading, command+"\n\n"+v012ReleaseHeading, 1)
 
-		if err := validateV011ReleasePathPlacement(mutated); err == nil {
-			t.Fatalf("validator accepted %q before %q", command, v011ReleaseHeading)
+		if err := validateV012ReleasePathPlacement(mutated); err == nil {
+			t.Fatalf("validator accepted %q before %q", command, v012ReleaseHeading)
 		}
 	})
 }
 
-func validateV011ReleasePathPlacement(readme string) error {
-	sectionStart := strings.Index(readme, v011ReleaseHeading)
+func validateV012ReleasePathPlacement(readme string) error {
+	sectionStart := strings.Index(readme, v012ReleaseHeading)
 	if sectionStart < 0 {
-		return fmt.Errorf("README.md is missing %q", v011ReleaseHeading)
+		return fmt.Errorf("README.md is missing %q", v012ReleaseHeading)
 	}
 	sectionEnd := len(readme)
-	if nextHeading := strings.Index(readme[sectionStart+len(v011ReleaseHeading):], "\n## "); nextHeading >= 0 {
-		sectionEnd = sectionStart + len(v011ReleaseHeading) + nextHeading
+	if nextHeading := strings.Index(readme[sectionStart+len(v012ReleaseHeading):], "\n## "); nextHeading >= 0 {
+		sectionEnd = sectionStart + len(v012ReleaseHeading) + nextHeading
 	}
 
 	section := readme[sectionStart:sectionEnd]
 	outsideSection := readme[:sectionStart] + readme[sectionEnd:]
-	for _, contract := range v011ReleaseSectionContracts {
+	for _, contract := range v012ReleaseSectionContracts {
 		if !strings.Contains(section, contract) {
 			return fmt.Errorf("README.md is missing release-section contract %q", contract)
 		}
 		if strings.Contains(outsideSection, contract) {
-			return fmt.Errorf("README.md contains release-section contract %q outside %q", contract, v011ReleaseHeading)
+			return fmt.Errorf("README.md contains release-section contract %q outside %q", contract, v012ReleaseHeading)
 		}
 	}
 	return nil

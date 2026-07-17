@@ -3,6 +3,7 @@ package releasetest
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -86,6 +87,33 @@ type workflowContract struct {
 	Jobs map[string]struct {
 		TimeoutMinutes int `yaml:"timeout-minutes"`
 	} `yaml:"jobs"`
+}
+
+type goreleaserConfig struct {
+	Builds []struct {
+		ID      string   `yaml:"id"`
+		LDFlags []string `yaml:"ldflags"`
+	} `yaml:"builds"`
+	Brews []struct {
+		Repository struct {
+			Branch      string `yaml:"branch"`
+			PullRequest struct {
+				Enabled bool `yaml:"enabled"`
+				Base    struct {
+					Branch string `yaml:"branch"`
+				} `yaml:"base"`
+			} `yaml:"pull_request"`
+		} `yaml:"repository"`
+	} `yaml:"brews"`
+}
+
+func readGoReleaserConfig(t *testing.T) goreleaserConfig {
+	t.Helper()
+	var config goreleaserConfig
+	if err := yaml.Unmarshal([]byte(readFile(t, ".goreleaser.yaml")), &config); err != nil {
+		t.Fatalf("parse .goreleaser.yaml: %v", err)
+	}
+	return config
 }
 
 func readWorkflowContract(t *testing.T, name string) workflowContract {
@@ -216,7 +244,7 @@ func TestReleaseConfigurationUsesFrozenContract(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"checksums.txt", "spdx-json", "internal/buildinfo.Version", "internal/buildinfo.Commit", "internal/buildinfo.Date", "homebrew-tap", "directory: Formula", "pull_request:"} {
+	for _, want := range []string{"checksums.txt", "spdx-json", "internal/buildinfo.version", "internal/buildinfo.commit", "internal/buildinfo.date", "homebrew-tap", "directory: Formula", "pull_request:"} {
 		if !strings.Contains(config, want) {
 			t.Errorf(".goreleaser.yaml missing %q", want)
 		}
@@ -231,6 +259,79 @@ func TestReleaseConfigurationUsesFrozenContract(t *testing.T) {
 	if strings.Contains(workflow, "PUSHOVER_") || strings.Contains(workflow, "pushover send") {
 		t.Error("release workflow must not contain live Pushover credentials or sends")
 	}
+}
+
+func TestGoReleaserLDFlagsInjectVersionMetadata(t *testing.T) {
+	config := readGoReleaserConfig(t)
+	if len(config.Builds) == 0 {
+		t.Fatal(".goreleaser.yaml has no builds")
+	}
+
+	const (
+		version = "v0.1.2-test"
+		commit  = "abc123def456"
+		date    = "2026-07-17T12:34:56Z"
+	)
+	wantFlags := "-s -w -X github.com/jurgenj136/pushover-cli/internal/buildinfo.version=" + version +
+		" -X github.com/jurgenj136/pushover-cli/internal/buildinfo.commit=" + commit +
+		" -X github.com/jurgenj136/pushover-cli/internal/buildinfo.date=" + date
+
+	for _, build := range config.Builds {
+		gotFlags := renderLDFlags(build.LDFlags, version, commit, date)
+		if gotFlags != wantFlags {
+			t.Errorf("build %q ldflags = %q, want %q", build.ID, gotFlags, wantFlags)
+		}
+	}
+
+	binary := filepath.Join(t.TempDir(), "pushover")
+	command := exec.Command("go", "build", "-o", binary, "-ldflags", renderLDFlags(config.Builds[0].LDFlags, version, commit, date), "./cmd/pushover")
+	command.Dir = repoRoot(t)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build release binary: %v\n%s", err, output)
+	}
+
+	output, err := exec.Command(binary, "--json", "version").Output()
+	if err != nil {
+		t.Fatalf("run release binary: %v", err)
+	}
+	var response struct {
+		Result struct {
+			Version   string `json:"version"`
+			Commit    string `json:"commit"`
+			BuildDate string `json:"build_date"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		t.Fatalf("parse version JSON: %v\n%s", err, output)
+	}
+	if response.Result.Version != version || response.Result.Commit != commit || response.Result.BuildDate != date {
+		t.Fatalf("injected metadata = %#v, want version=%q commit=%q date=%q", response.Result, version, commit, date)
+	}
+}
+
+func TestHomebrewPublicationUsesVersionedPullRequestBranch(t *testing.T) {
+	config := readGoReleaserConfig(t)
+	if len(config.Brews) != 1 {
+		t.Fatalf("brews = %d, want 1", len(config.Brews))
+	}
+	repository := config.Brews[0].Repository
+	if repository.Branch != "pushover-{{ .Version }}" {
+		t.Fatalf("Homebrew branch = %q, want versioned feature branch", repository.Branch)
+	}
+	if !repository.PullRequest.Enabled {
+		t.Fatal("Homebrew publication must create a pull request")
+	}
+	if repository.PullRequest.Base.Branch != "" && repository.PullRequest.Base.Branch != "main" {
+		t.Fatalf("Homebrew pull request base = %q, want GoReleaser default main", repository.PullRequest.Base.Branch)
+	}
+}
+
+func renderLDFlags(flags []string, version, commit, date string) string {
+	return strings.NewReplacer(
+		"{{ .Version }}", version,
+		"{{ .Commit }}", commit,
+		"{{ .Date }}", date,
+	).Replace(strings.Join(flags, " "))
 }
 
 func TestSnapshotWorkflowsInstallVerifiedSyft(t *testing.T) {
