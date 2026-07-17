@@ -195,6 +195,36 @@ func TestFishCompletionUsesExactStaticPaths(t *testing.T) {
 	}
 }
 
+func TestFishCompletionResolvesNestedPathWithoutErrors(t *testing.T) {
+	if _, err := exec.LookPath("fish"); err != nil {
+		t.Skip("fish is not installed")
+	}
+	script, err := completionScript("fish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := "function commandline\n" +
+		"    if test \"$argv[1]\" = -opc\n" +
+		"        printf '%s\\n' pushover profiles add\n" +
+		"    end\n" +
+		"end\n\n" +
+		script +
+		"\nprintf '%s\\n' (__fish_pushover_path)\n"
+	command := exec.Command("fish", "-c", probe)
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("fish completion probe failed: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "profiles-add" {
+		t.Fatalf("fish path = %q, want %q", got, "profiles-add")
+	}
+	if got := strings.TrimSpace(stderr.String()); got != "" {
+		t.Fatalf("fish completion emitted stderr: %q", got)
+	}
+}
+
 func bashCandidates(t *testing.T, words ...string) []string {
 	t.Helper()
 	script, err := completionScript("bash")

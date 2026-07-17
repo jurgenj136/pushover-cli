@@ -186,7 +186,10 @@ func completionScript(shell string) (string, error) {
 			"function __fish_pushover_path\n" +
 			"    set -l words (commandline -opc)\n" +
 			"    set -e words[1]\n" +
-			"    set -l index 1 root '' child '' nested ''\n" +
+			"    set -l index 1\n" +
+			"    set -l root ''\n" +
+			"    set -l child ''\n" +
+			"    set -l nested ''\n" +
 			"    while test $index -le (count $words)\n" +
 			"        set -l word $words[$index]\n" +
 			"        switch $word\n" +

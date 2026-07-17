@@ -2,7 +2,10 @@
 function __fish_pushover_path
     set -l words (commandline -opc)
     set -e words[1]
-    set -l index 1 root '' child '' nested ''
+    set -l index 1
+    set -l root ''
+    set -l child ''
+    set -l nested ''
     while test $index -le (count $words)
         set -l word $words[$index]
         switch $word
