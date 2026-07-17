@@ -433,7 +433,7 @@ func (m *Manager) commitStaged(ctx context.Context, before, after config.Config,
 func (m *Manager) commitError(ctx context.Context, before, after config.Config, staged []domain.SecretRef, commitErr error) error {
 	if config.OutcomeOf(commitErr) == config.Unchanged {
 		if cleanupErr := m.rollback(staged); cleanupErr != nil {
-			return cleanupErr
+			return apperror.Wrap("configuration_commit_failed", apperror.CategoryConfig, "configuration could not be updated", errors.Join(commitErr, cleanupErr))
 		}
 		return apperror.Wrap("configuration_commit_failed", apperror.CategoryConfig, "configuration could not be updated", commitErr)
 	}
@@ -451,7 +451,7 @@ func (m *Manager) commitError(ctx context.Context, before, after config.Config, 
 			}
 		}
 		if cleanupErr != nil {
-			return apperror.Wrap("secret_cleanup_required", apperror.CategoryConfig, "configuration durability is unknown and secret cleanup is required", cleanupErr)
+			return apperror.Wrap("secret_cleanup_required", apperror.CategoryConfig, "configuration durability is unknown and secret cleanup is required", errors.Join(commitErr, cleanupErr))
 		}
 	}
 	_ = before
@@ -463,17 +463,17 @@ func (m *Manager) commitError(ctx context.Context, before, after config.Config, 
 }
 func (m *Manager) rollback(refs []domain.SecretRef) error {
 	seen := map[domain.SecretRef]bool{}
-	failed := false
+	var causes []error
 	for _, ref := range refs {
 		if ref != "" && !seen[ref] {
 			seen[ref] = true
 			if err := m.Secrets.Delete(context.Background(), ref); err != nil {
-				failed = true
+				causes = append(causes, err)
 			}
 		}
 	}
-	if failed {
-		return settingError("secret_cleanup_required", "secret cleanup is required", apperror.CategoryConfig)
+	if len(causes) != 0 {
+		return apperror.Wrap("secret_cleanup_required", apperror.CategoryConfig, "secret cleanup is required", errors.Join(causes...))
 	}
 	return nil
 }
