@@ -7,10 +7,11 @@ send before allowing an external side effect.
 
 ## Installation
 
-`v0.1.0` has not been published. Until its public tag exists and the release
-workflow succeeds, a source build is the only supported installation path. The
-Homebrew, release-archive, and versioned `go install` paths below become
-supported only after that public release succeeds; they do not exist yet.
+`v0.1.0` is tagged, but its release workflow failed before publishing
+artifacts. No supported release exists yet. Until the `v0.1.1` release workflow
+succeeds, a source build is the only supported installation path. The Homebrew,
+release-archive, and versioned `go install` paths below become supported only
+after that public release succeeds; they do not exist yet.
 
 ### Build from source
 
@@ -20,9 +21,9 @@ cd pushover-cli
 go install ./cmd/pushover
 ```
 
-### Install v0.1.0 after the public release
+### Install v0.1.1 after the public release
 
-After GitHub shows the public `v0.1.0` tag and its release workflow has
+After GitHub shows the public `v0.1.1` tag and its release workflow has
 succeeded, use one of these supported paths:
 
 ```sh
@@ -30,15 +31,15 @@ brew install jurgenj136/tap/pushover
 ```
 
 ```sh
-go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.0
+go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.1
 ```
 
 The Homebrew release workflow opens a formula pull request in
 `jurgenj136/homebrew-tap`; the Homebrew command is available once that formula
 is merged. For an archive, download the archive for your operating system and
-architecture plus its matching `checksums.txt` from the `v0.1.0` GitHub Release.
-Archive names are `pushover_0.1.0_<os>_<arch>.tar.gz` on macOS and Linux, and
-`pushover_0.1.0_<os>_<arch>.zip` on Windows.
+architecture plus its matching `checksums.txt` from the `v0.1.1` GitHub Release.
+Archive names are `pushover_0.1.1_<os>_<arch>.tar.gz` on macOS and Linux, and
+`pushover_0.1.1_<os>_<arch>.zip` on Windows.
 
 Before extracting an archive, verify the downloaded archive against the
 published checksum. Use the command for your operating system from the
@@ -47,21 +48,21 @@ directory containing the archive and `checksums.txt`.
 On macOS, replace the archive name with the file you downloaded:
 
 ```sh
-archive=pushover_0.1.0_darwin_arm64.tar.gz
+archive=pushover_0.1.1_darwin_arm64.tar.gz
 checksum=$(grep " $archive$" checksums.txt) && printf '%s\n' "$checksum" | shasum -a 256 -c -
 ```
 
 On Linux:
 
 ```sh
-archive=pushover_0.1.0_linux_amd64.tar.gz
+archive=pushover_0.1.1_linux_amd64.tar.gz
 checksum=$(grep " $archive$" checksums.txt) && printf '%s\n' "$checksum" | sha256sum --check -
 ```
 
 In Windows PowerShell:
 
 ```powershell
-$archive = "pushover_0.1.0_windows_amd64.zip"
+$archive = "pushover_0.1.1_windows_amd64.zip"
 $entry = Select-String -Path checksums.txt -Pattern (" " + [regex]::Escape($archive) + '$')
 if ($null -eq $entry) { throw "No checksum entry found for $archive" }
 $expected = ($entry.Line -split '\s+')[0].ToUpperInvariant()
@@ -90,7 +91,7 @@ npx --yes skills@1.5.9 add . --skill pushover-cli --agent codex --yes
 ```
 
 Omit `--skill pushover-cli` to install every discoverable skill in the
-repository. Inspect the installed policy before use. After the public `v0.1.0`
+repository. Inspect the installed policy before use. After the public `v0.1.1`
 release succeeds, install the published portable skill with:
 
 ```sh

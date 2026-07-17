@@ -72,14 +72,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          contract=internal/releasetest/testdata/release-contract.json
+          tool_dir="${RUNNER_TEMP}/syft"
+          mkdir -p "$tool_dir"
+          contract="${GITHUB_WORKSPACE}/internal/releasetest/testdata/release-contract.json"
           checksums_url=$(jq -r '.syft.checksums_url' "$contract")
           asset=$(jq -r '.syft.host_asset' "$contract" | sed "s/\${GOARCH}/$(go env GOARCH)/")
+          cd "$tool_dir"
           curl --fail --location --silent --show-error --remote-name "$checksums_url"
           curl --fail --location --silent --show-error --remote-name "${checksums_url%/*}/$asset"
           grep " $asset$" syft_1.46.0_checksums.txt | shasum -a 256 -c -
           tar -xzf "$asset" syft
           chmod +x syft
-          echo "$PWD" >> "$GITHUB_PATH"
+          echo "$tool_dir" >> "$GITHUB_PATH"
       - name: Build a release snapshot
         run: go run github.com/goreleaser/goreleaser/v2@v2.17.0 release --snapshot --clean

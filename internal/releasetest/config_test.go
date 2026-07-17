@@ -241,16 +241,29 @@ func TestSnapshotWorkflowsInstallVerifiedSyft(t *testing.T) {
 		t.Fatal("CI and release workflows must use the same hardened Syft installer")
 	}
 	for _, want := range []string{
-		"contract=internal/releasetest/testdata/release-contract.json",
+		`contract="${GITHUB_WORKSPACE}/internal/releasetest/testdata/release-contract.json"`,
+		`tool_dir="${RUNNER_TEMP}/syft"`,
+		`mkdir -p "$tool_dir"`,
+		`cd "$tool_dir"`,
 		"checksums_url=$(jq -r '.syft.checksums_url' \"$contract\")",
 		"asset=$(jq -r '.syft.host_asset' \"$contract\" | sed",
 		"curl --fail --location --silent --show-error --remote-name \"$checksums_url\"",
 		"grep \" $asset$\" syft_1.46.0_checksums.txt | shasum -a 256 -c -",
 		"tar -xzf \"$asset\" syft",
-		"echo \"$PWD\" >> \"$GITHUB_PATH\"",
+		"echo \"$tool_dir\" >> \"$GITHUB_PATH\"",
 	} {
 		if !strings.Contains(ci, want) {
 			t.Errorf("Syft installer missing %q", want)
+		}
+	}
+	for _, beforeAfter := range [][2]string{
+		{`mkdir -p "$tool_dir"`, `curl --fail --location --silent --show-error --remote-name "$checksums_url"`},
+		{`cd "$tool_dir"`, `curl --fail --location --silent --show-error --remote-name "$checksums_url"`},
+		{`cd "$tool_dir"`, `tar -xzf "$asset" syft`},
+	} {
+		before, after := beforeAfter[0], beforeAfter[1]
+		if strings.Index(ci, before) > strings.Index(ci, after) {
+			t.Errorf("Syft installer must run %q before %q", before, after)
 		}
 	}
 }
