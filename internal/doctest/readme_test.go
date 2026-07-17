@@ -12,7 +12,7 @@ import (
 	"github.com/jurgenj136/pushover-cli/internal/output"
 )
 
-const v013ReleaseHeading = "### Install v0.1.3 after the public release"
+const v013ReleaseHeading = "### Install supported v0.1.3"
 
 var v013ReleaseSectionContracts = []string{
 	"brew install jurgenj136/tap/pushover",
@@ -85,7 +85,7 @@ func TestREADMEInstallCredentialsAndVersionContracts(t *testing.T) {
 		"Skill version `"+skillVersion+"` requires CLI version `"+minimumCLI+"` or newer",
 		"npx --yes skills@"+skillsCLIMatch[1]+" add . --skill pushover-cli --agent codex --yes",
 		"The skill does not install the native `pushover` binary",
-		"No Homebrew formula or release archive is claimed",
+		"The published skill is available with the pinned skills CLI",
 		"Pushover dashboard",
 		"register your own Pushover application",
 		"required string fields `token` and `user_key`",
@@ -101,7 +101,7 @@ func TestREADMEInstallCredentialsAndVersionContracts(t *testing.T) {
 	}
 }
 
-func TestREADMEKeepsV013ReleasePathsFutureGated(t *testing.T) {
+func TestREADMEAnnouncesSupportedV013Release(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 
 	requireText(t, readme, "README.md",
@@ -109,9 +109,8 @@ func TestREADMEKeepsV013ReleasePathsFutureGated(t *testing.T) {
 		"`v0.1.1` was released, but its Darwin arm64 binary reported development metadata",
 		"its Homebrew publication pushed `Formula/pushover.rb` directly to the tap's `main` branch",
 		"`v0.1.2` was released, but versioned `go install` reported `version=dev` and `commit=unknown`",
-		"No supported release exists yet",
-		"Until the `v0.1.3` release workflow succeeds, a source build is the only supported installation path",
-		"Homebrew, release-archive, and versioned `go install` paths below become supported only after that public release succeeds; they do not exist yet",
+		"`v0.1.3` is the supported pre-1.0 release",
+		"`v0.1.0` through `v0.1.2` are unsupported",
 		"Release archives and Homebrew install a binary with linker-injected version, commit, and build date metadata.",
 		"Versioned `go install` discovers its version from Go module metadata; commit and build date may remain `unknown`.",
 		"checksums.txt",
@@ -121,13 +120,14 @@ func TestREADMEKeepsV013ReleasePathsFutureGated(t *testing.T) {
 	if err := validateV013ReleasePathPlacement(readme); err != nil {
 		t.Fatal(err)
 	}
+	if err := validateV013ReleaseAnnouncement(readme); err != nil {
+		t.Fatal(err)
+	}
 
-	t.Run("rejects a deliberate pre-gate release command", func(t *testing.T) {
-		const command = "brew install jurgenj136/tap/pushover"
-		mutated := strings.Replace(readme, v013ReleaseHeading, command+"\n\n"+v013ReleaseHeading, 1)
-
-		if err := validateV013ReleasePathPlacement(mutated); err == nil {
-			t.Fatalf("validator accepted %q before %q", command, v013ReleaseHeading)
+	t.Run("rejects a conditional release claim", func(t *testing.T) {
+		mutated := readme + "\nHomebrew becomes supported only after the public release succeeds.\n"
+		if err := validateV013ReleaseAnnouncement(mutated); err == nil {
+			t.Fatal("validator accepted a conditional v0.1.3 release claim")
 		}
 	})
 }
@@ -150,6 +150,22 @@ func validateV013ReleasePathPlacement(readme string) error {
 		}
 		if strings.Contains(outsideSection, contract) {
 			return fmt.Errorf("README.md contains release-section contract %q outside %q", contract, v013ReleaseHeading)
+		}
+	}
+	return nil
+}
+
+func validateV013ReleaseAnnouncement(readme string) error {
+	for _, conditionalClaim := range []string{
+		"No supported release exists yet",
+		"Until the `v0.1.3` release workflow succeeds",
+		"become supported only after that public release succeeds",
+		"after the public `v0.1.3` release succeeds",
+		"after the public release succeeds",
+		"do not exist yet",
+	} {
+		if strings.Contains(readme, conditionalClaim) {
+			return fmt.Errorf("README.md contains conditional release claim %q", conditionalClaim)
 		}
 	}
 	return nil

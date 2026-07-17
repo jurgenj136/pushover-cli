@@ -2,8 +2,8 @@
 
 `pushover-cli` is an unofficial, outbound-only Go client for the Pushover
 Message API. It is intended for people, scripts, and explicitly authorised AI
-agents. The project is still pre-release: use source builds and review every
-send before allowing an external side effect.
+agents. `v0.1.3` is the supported pre-1.0 release. Review every send before
+allowing an external side effect.
 
 ## Installation
 
@@ -14,10 +14,8 @@ directly to the tap's `main` branch; the resulting `main` to `main` pull request
 failed nonfatally.
 `v0.1.2` was released, but versioned `go install` reported `version=dev` and
 `commit=unknown`; it is unsupported.
-No supported release exists yet. Until the `v0.1.3` release workflow succeeds,
-a source build is the only supported installation path. The Homebrew,
-release-archive, and versioned `go install` paths below become supported only
-after that public release succeeds; they do not exist yet.
+`v0.1.3` is the supported pre-1.0 release; `v0.1.0` through `v0.1.2` are
+unsupported.
 
 Release archives and Homebrew install a binary with linker-injected version,
 commit, and build date metadata. Versioned `go install` discovers its version
@@ -31,10 +29,9 @@ cd pushover-cli
 go install ./cmd/pushover
 ```
 
-### Install v0.1.3 after the public release
+### Install supported v0.1.3
 
-After GitHub shows the public `v0.1.3` tag and its release workflow has
-succeeded, use one of these supported paths:
+Use one of these supported installation paths:
 
 ```sh
 brew install jurgenj136/tap/pushover
@@ -44,10 +41,8 @@ brew install jurgenj136/tap/pushover
 go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.3
 ```
 
-The Homebrew release workflow opens a formula pull request in
-`jurgenj136/homebrew-tap`; the Homebrew command is available once that formula
-is merged. For an archive, download the archive for your operating system and
-architecture plus its matching `checksums.txt` from the `v0.1.3` GitHub Release.
+For an archive, download the archive for your operating system and architecture
+plus its matching `checksums.txt` from the `v0.1.3` GitHub Release.
 Archive names are `pushover_0.1.3_<os>_<arch>.tar.gz` on macOS and Linux, and
 `pushover_0.1.3_<os>_<arch>.zip` on Windows.
 
@@ -92,21 +87,21 @@ gh attestation verify checksums.txt --repo jurgenj136/pushover-cli
 
 The portable Agent Skill is in `.claude/skills/pushover-cli/SKILL.md`. Skill
 version `0.1.0` requires CLI version `0.1.0` or newer. The skill does not
-install the native `pushover` binary. No Homebrew formula or release archive is
-claimed before the public `v0.1.3` release succeeds. From a clone, install only this
-skill for an agent with the pinned skills CLI:
+install the native `pushover` binary. The published skill is available with the
+pinned skills CLI:
+
+```sh
+npx --yes skills@1.5.9 add jurgenj136/pushover-cli --skill pushover-cli --yes
+```
+
+From a clone, install only this skill for an agent with the pinned skills CLI:
 
 ```sh
 npx --yes skills@1.5.9 add . --skill pushover-cli --agent codex --yes
 ```
 
 Omit `--skill pushover-cli` to install every discoverable skill in the
-repository. Inspect the installed policy before use. After the public `v0.1.3`
-release succeeds, install the published portable skill with:
-
-```sh
-npx --yes skills@1.5.9 add jurgenj136/pushover-cli --skill pushover-cli --yes
-```
+repository. Inspect the installed policy before use.
 
 ## First run
 
