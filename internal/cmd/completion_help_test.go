@@ -24,7 +24,7 @@ func TestStaticHelpAndCompletionDoNotOpenRuntime(t *testing.T) {
 		},
 	}
 
-	for _, args := range [][]string{{"--help"}, {"auth", "backend", "--help"}, {"completion", "fish"}} {
+	for _, args := range [][]string{{"--help"}, {"auth", "--help"}, {"auth", "backend", "--help"}, {"completion", "fish"}} {
 		var stdout, stderr bytes.Buffer
 		if exit := Execute(context.Background(), args, testIO(&stdout, &stderr), deps); exit != 0 {
 			t.Fatalf("args=%q exit=%d stderr=%q", args, exit, stderr.String())
@@ -39,11 +39,13 @@ func TestStaticHelpAndCompletionDoNotOpenRuntime(t *testing.T) {
 }
 
 func TestHelpExposesBareAuthBackendWithoutShow(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	if exit := Execute(context.Background(), []string{"auth", "backend", "--help"}, testIO(&stdout, &stderr), Dependencies{}); exit != 0 {
-		t.Fatalf("exit=%d stderr=%q", exit, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "set") || strings.Contains(stdout.String(), "show") {
-		t.Fatalf("auth backend help = %q", stdout.String())
+	for _, args := range [][]string{{"--help"}, {"auth", "--help"}, {"auth", "backend", "--help"}} {
+		var stdout, stderr bytes.Buffer
+		if exit := Execute(context.Background(), args, testIO(&stdout, &stderr), Dependencies{}); exit != 0 {
+			t.Fatalf("args=%q exit=%d stderr=%q", args, exit, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "Run 'pushover auth backend'") || strings.Contains(stdout.String(), "auth backend show") {
+			t.Fatalf("args=%q help=%q", args, stdout.String())
+		}
 	}
 }

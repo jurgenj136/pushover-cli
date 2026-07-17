@@ -5,10 +5,12 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jurgenj136/pushover-cli/internal/apperror"
 	"github.com/jurgenj136/pushover-cli/internal/buildinfo"
 	"github.com/jurgenj136/pushover-cli/internal/config"
+	"github.com/jurgenj136/pushover-cli/internal/operation"
 	"github.com/jurgenj136/pushover-cli/internal/secrets"
 )
 
@@ -100,6 +102,28 @@ func TestOpenAdminSettingsDoesNotOpenSecretsWhenConfigurationIsMissing(t *testin
 	}
 }
 
+func TestBeginAdminCanceledParentDoesNotOpenSettingsAndClosesScope(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	contexts := &cancelTrackingContexts{}
+	adminCalls := 0
+	deps := Dependencies{
+		Operations: operation.Factory{Contexts: contexts},
+		admin: func(context.Context) (AdminDependencies, error) {
+			adminCalls++
+			return AdminDependencies{}, errors.New("admin runtime must not open")
+		},
+	}
+
+	_, err := beginAdmin(ctx, deps, rootCommand{}, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v, want context cancellation", err)
+	}
+	if adminCalls != 0 || contexts.calls != 1 || contexts.cancels != 1 {
+		t.Fatalf("admin calls=%d contexts=%d cancels=%d, want 0/1/1", adminCalls, contexts.calls, contexts.cancels)
+	}
+}
+
 func TestValidateAdminEnvironmentRejectsPartialCredentialsWithoutValues(t *testing.T) {
 	secret := "do-not-disclose"
 	deps := Dependencies{lookupEnv: func(name string) (string, bool) {
@@ -134,4 +158,18 @@ type adminSecretFactory struct{ opens int }
 func (f *adminSecretFactory) Open(context.Context, config.Backend) (secrets.Store, error) {
 	f.opens++
 	return secrets.NewMemoryStore(), nil
+}
+
+type cancelTrackingContexts struct {
+	calls   int
+	cancels int
+}
+
+func (c *cancelTrackingContexts) WithDeadline(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	c.calls++
+	ctx, cancel := context.WithDeadline(parent, deadline)
+	return ctx, func() {
+		c.cancels++
+		cancel()
+	}
 }

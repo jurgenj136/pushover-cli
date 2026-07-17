@@ -14,13 +14,13 @@ import (
 
 type authCommand struct {
 	Status  authStatusCommand  `cmd:"" help:"Report selected authentication status."`
-	Backend authBackendCommand `cmd:"" help:"Report or migrate the secret backend."`
+	Backend authBackendCommand `cmd:"" help:"Report or migrate the secret backend. Run 'pushover auth backend' to report it."`
 }
 
 type authStatusCommand struct{}
 type authBackendCommand struct {
 	Show authBackendShowCommand `cmd:"" default:"1" hidden:""`
-	Set  authBackendSetCommand  `cmd:"" help:"Migrate secrets to a backend."`
+	Set  authBackendSetCommand  `cmd:"" help:"Migrate secrets to a backend. Run 'pushover auth backend' to report it."`
 }
 type authBackendShowCommand struct{}
 type authBackendSetCommand struct {

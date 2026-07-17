@@ -29,6 +29,10 @@ func beginAdmin(ctx context.Context, deps Dependencies, root rootCommand, parsed
 	if err != nil {
 		return adminRuntime{}, err
 	}
+	if err := scope.Context().Err(); err != nil {
+		scope.Close()
+		return adminRuntime{}, err
+	}
 	service, err := deps.openAdminSettings(scope.Context())
 	if err != nil {
 		scope.Close()
