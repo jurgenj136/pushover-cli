@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jurgenj136/pushover-cli/internal/apperror"
 	"github.com/jurgenj136/pushover-cli/internal/buildinfo"
 	"github.com/jurgenj136/pushover-cli/internal/config"
 	"github.com/jurgenj136/pushover-cli/internal/secrets"
@@ -90,8 +91,9 @@ func TestOpenAdminSettingsDoesNotOpenSecretsWhenConfigurationIsMissing(t *testin
 	deps := Dependencies{Admin: AdminDependencies{Config: store, SecretFactory: factory}}
 
 	_, err := deps.openAdminSettings(context.Background())
-	if !errors.Is(err, config.ErrNotFound) {
-		t.Fatalf("err = %v, want missing configuration", err)
+	var typed *apperror.Error
+	if !errors.As(err, &typed) || typed.Code != "configuration_unavailable" || typed.Category != apperror.CategoryConfig {
+		t.Fatalf("err = %v, want typed missing-configuration error", err)
 	}
 	if factory.opens != 0 {
 		t.Fatalf("secret factory opened %d stores for missing config", factory.opens)

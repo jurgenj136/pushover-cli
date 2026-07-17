@@ -23,11 +23,15 @@ type rootCommand struct {
 	NoColor bool   `name:"no-color" help:"Disable color output."`
 	Timeout string `name:"timeout" help:"Total operation timeout (1s through 15m)."`
 
-	Send       SendCommand       `cmd:"" help:"Send a message."`
 	Setup      setupCommand      `cmd:"" help:"Interactively configure Pushover."`
+	Send       SendCommand       `cmd:"" help:"Send a message."`
 	Profiles   profilesCommand   `cmd:"" help:"Manage application profiles."`
 	Recipients recipientsCommand `cmd:"" help:"Manage recipient aliases."`
+	Sounds     soundsCommand     `cmd:"" help:"List supported Pushover sounds."`
+	Limits     limitsCommand     `cmd:"" help:"Report the current Pushover API limits."`
 	Auth       authCommand       `cmd:"" help:"Inspect or migrate authentication storage."`
+	Info       infoCommand       `cmd:"" help:"Report local configuration and build information."`
+	Version    versionCommand    `cmd:"" help:"Print version information."`
 	Completion completionCommand `cmd:"" help:"Print shell completion."`
 }
 
@@ -87,6 +91,10 @@ func Execute(ctx context.Context, args []string, streams IO, deps Dependencies) 
 		return executeRecipients(ctx, streams, deps, cli, parsed, selected)
 	case "auth status", "auth backend", "auth backend set":
 		return executeAuth(ctx, streams, deps, cli, parsed, selected)
+	case "sounds", "limits", "info":
+		return executeIntrospection(ctx, streams, deps, cli, parsed, selected)
+	case "version":
+		return executeVersion(ctx, streams, deps, cli)
 	case "completion":
 		return executeCompletion(streams, deps, mode, cli.Completion, cli.NoColor)
 	default:
@@ -195,7 +203,7 @@ func preScannedCommand(args []string) string {
 			continue
 		}
 		switch arg {
-		case "send", "setup", "completion":
+		case "send", "setup", "sounds", "limits", "info", "version", "completion":
 			return arg
 		case "auth":
 			if index+1 < len(args) {

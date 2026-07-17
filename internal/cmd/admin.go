@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jurgenj136/pushover-cli/internal/apperror"
 	"github.com/jurgenj136/pushover-cli/internal/buildinfo"
@@ -68,6 +69,9 @@ func (d Dependencies) openAdminSettings(ctx context.Context) (settings.Service, 
 	}
 	selected, err := admin.Config.Load(ctx)
 	if err != nil {
+		if errors.Is(err, config.ErrNotFound) {
+			return nil, apperror.New("configuration_unavailable", apperror.CategoryConfig, "configuration is unavailable; run setup first")
+		}
 		return nil, err
 	}
 	store, err := admin.SecretFactory.Open(ctx, selected.Backend)
