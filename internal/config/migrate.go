@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 )
 
@@ -19,8 +18,8 @@ func (s *FileStore) migrateV0(ctx context.Context, original []byte, config Confi
 		return Config{}, err
 	}
 	parent := filepath.Dir(s.path)
-	backup := filepath.Join(parent, fmt.Sprintf("%s.v0.%s.bak", filepath.Base(s.path), s.clock.Now().UTC().Format("20060102T150405.000000000Z")))
-	file, err := s.fs.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	backupBase := filepath.Join(parent, fmt.Sprintf("%s.v0.%s.bak", filepath.Base(s.path), s.clock.Now().UTC().Format("20060102T150405.000000000Z")))
+	file, backup, err := openExclusiveFile(s.fs, backupBase)
 	if err != nil {
 		return Config{}, privateStorageError(err)
 	}

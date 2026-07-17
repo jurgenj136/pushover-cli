@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,22 +56,34 @@ func TestLoadRefusesFutureOrMissingSchemaWithoutWrites(t *testing.T) {
 	}
 }
 
-func TestMigrationBackupCollisionAndCommitFailureKeepOriginal(t *testing.T) {
-	path := "/config/config.yaml"
+func TestLoadMigratesPrivateV0PastBackupNameCollision(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
 	original := privateV0Fixture(t)
-	backup := "/config/config.yaml.v0.19700101T000000.123000000Z.bak"
-	filesystem := newFakeFS()
-	filesystem.contents[path] = original
-	filesystem.contents[backup] = []byte("existing")
-	_, err := NewFileStoreWith(path, filesystem, fixedClock{}).Load(context.Background())
-	if err == nil || !errors.Is(err, fs.ErrExist) {
-		t.Fatalf("collision err = %v", err)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if got := string(filesystem.contents[path]); got != string(original) {
-		t.Fatalf("original changed: %q", got)
+	backup := filepath.Join(directory, "config.yaml.v0.19700101T000000.123000000Z.bak")
+	if err := os.WriteFile(backup, []byte("existing backup"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if got := string(filesystem.contents[backup]); got != "existing" {
-		t.Fatalf("existing backup changed: %q", got)
+
+	config, err := NewFileStoreWith(path, osFileSystem{}, fixedClock{}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema version = %d", config.SchemaVersion)
+	}
+	if got, err := os.ReadFile(backup); err != nil || string(got) != "existing backup" {
+		t.Fatalf("colliding backup = %q, err=%v", got, err)
+	}
+	if got, err := os.ReadFile(backup + ".1"); err != nil || string(got) != string(original) {
+		t.Fatalf("replacement backup = %q, err=%v", got, err)
+	}
+	temporary := filepath.Join(directory, ".config.yaml.123000000.tmp")
+	if _, err := os.Stat(temporary); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("migration temporary remains: %v", err)
 	}
 }
 

@@ -15,7 +15,10 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-const maxConfigBytes = 1 << 20
+const (
+	maxConfigBytes           = 1 << 20
+	maxExclusiveOpenAttempts = 256
+)
 
 type realClock struct{}
 
@@ -57,6 +60,22 @@ func NewFileStoreWith(path string, filesystem FileSystem, clock Clock) *FileStor
 	return &FileStore{path: path, fs: filesystem, clock: clock}
 }
 func (s *FileStore) Path() string { return s.path }
+
+func openExclusiveFile(filesystem FileSystem, base string) (File, string, error) {
+	var err error
+	for attempt := 0; attempt < maxExclusiveOpenAttempts; attempt++ {
+		path := base
+		if attempt != 0 {
+			path = fmt.Sprintf("%s.%d", base, attempt)
+		}
+		file, openErr := filesystem.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if !errors.Is(openErr, fs.ErrExist) {
+			return file, path, openErr
+		}
+		err = openErr
+	}
+	return nil, "", err
+}
 
 func (s *FileStore) Load(ctx context.Context) (Config, error) {
 	if err := ctx.Err(); err != nil {
@@ -130,18 +149,7 @@ func (s *FileStore) Initialize(ctx context.Context, config Config) error {
 		return NewCommitError(Unchanged, err)
 	}
 	temporaryBase := filepath.Join(parent, fmt.Sprintf(".%s.%d.tmp", filepath.Base(s.path), s.clock.Now().UTC().UnixNano()))
-	var temporary string
-	var file File
-	for attempt := 0; attempt < 256; attempt++ {
-		temporary = temporaryBase
-		if attempt != 0 {
-			temporary = fmt.Sprintf("%s.%d", temporaryBase, attempt)
-		}
-		file, err = s.fs.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if !errors.Is(err, fs.ErrExist) {
-			break
-		}
-	}
+	file, temporary, err := openExclusiveFile(s.fs, temporaryBase)
 	if err != nil {
 		return NewCommitError(Unchanged, fmt.Errorf("create temporary configuration: %w", err))
 	}
@@ -209,8 +217,8 @@ func (s *FileStore) Commit(ctx context.Context, config Config) error {
 	if err := secureDirectory(parent); err != nil {
 		return NewCommitError(Unchanged, err)
 	}
-	temporary := filepath.Join(parent, fmt.Sprintf(".%s.%d.tmp", filepath.Base(s.path), s.clock.Now().UTC().UnixNano()))
-	file, err := s.fs.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	temporaryBase := filepath.Join(parent, fmt.Sprintf(".%s.%d.tmp", filepath.Base(s.path), s.clock.Now().UTC().UnixNano()))
+	file, temporary, err := openExclusiveFile(s.fs, temporaryBase)
 	if err != nil {
 		return NewCommitError(Unchanged, fmt.Errorf("create temporary configuration: %w", err))
 	}

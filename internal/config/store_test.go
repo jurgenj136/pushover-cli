@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -242,6 +243,53 @@ func TestCommitAtomicOrderingAndFailures(t *testing.T) {
 	}
 }
 
+func TestCommitRetriesCollidingTemporaryName(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	temporary := filepath.Join(directory, ".config.yaml.123000000.tmp")
+	if err := os.WriteFile(temporary, []byte("existing temporary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewFileStoreWith(path, osFileSystem{}, fixedClock{}).Commit(context.Background(), validConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(temporary); err != nil || string(got) != "existing temporary" {
+		t.Fatalf("colliding temporary = %q, err=%v", got, err)
+	}
+	if _, err := os.Stat(temporary + ".1"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("replacement temporary remains: %v", err)
+	}
+	if _, err := NewFileStore(path).Load(context.Background()); err != nil {
+		t.Fatalf("load committed configuration: %v", err)
+	}
+}
+
+func TestCommitSurfacesNonCollisionTemporaryCreationError(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	temporary := filepath.Join(directory, ".config.yaml.123000000.tmp")
+	if err := os.WriteFile(temporary, []byte("existing temporary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	filesystem := &failPathOpenFileSystem{
+		FileSystem: osFileSystem{},
+		failPath:   temporary + ".1",
+		err:        fs.ErrPermission,
+	}
+
+	err := NewFileStoreWith(path, filesystem, fixedClock{}).Commit(context.Background(), validConfig())
+	if !errors.Is(err, fs.ErrPermission) || OutcomeOf(err) != Unchanged {
+		t.Fatalf("err=%v outcome=%s", err, OutcomeOf(err))
+	}
+	if got, want := filesystem.opened, []string{temporary, temporary + ".1"}; !slices.Equal(got, want) {
+		t.Fatalf("opened=%v want=%v", got, want)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("configuration created after temporary error: %v", err)
+	}
+}
+
 func TestCommitCreatesPrivatePOSIXFiles(t *testing.T) {
 	if os.PathSeparator == '\\' {
 		t.Skip("POSIX mode semantics")
@@ -449,4 +497,19 @@ func (f *fakeFile) Close() error {
 func (f *fakeFile) Chmod(fs.FileMode) error {
 	f.owner.events = append(f.owner.events, "file.chmod:"+f.path)
 	return f.owner.failed("file.chmod")
+}
+
+type failPathOpenFileSystem struct {
+	FileSystem
+	failPath string
+	err      error
+	opened   []string
+}
+
+func (f *failPathOpenFileSystem) OpenFile(path string, flags int, mode fs.FileMode) (File, error) {
+	f.opened = append(f.opened, path)
+	if path == f.failPath {
+		return nil, f.err
+	}
+	return f.FileSystem.OpenFile(path, flags, mode)
 }
