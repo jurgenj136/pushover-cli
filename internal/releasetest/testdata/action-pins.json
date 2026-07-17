@@ -1,0 +1,22 @@
+{
+  "actions/checkout": {
+    "tag": "v7.0.0",
+    "sha": "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+    "date": "2026-06-17"
+  },
+  "actions/setup-go": {
+    "tag": "v7.0.0",
+    "sha": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+    "date": "2026-07-16"
+  },
+  "actions/attest": {
+    "tag": "v4.2.0",
+    "sha": "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
+    "date": "2026-07-16"
+  },
+  "goreleaser/goreleaser-action": {
+    "tag": "v7.2.3",
+    "sha": "f06c13b6b1a9625abc9e6e439d9c05a8f2190e94",
+    "date": "2026-06-27"
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "versions": {
+    "golangci_lint": "v2.12.2",
+    "goreleaser": "v2.17.0",
+    "skills": "1.5.9",
+    "syft": "v1.46.0"
+  },
+  "syft": {
+    "checksums_url": "https://github.com/anchore/syft/releases/download/v1.46.0/syft_1.46.0_checksums.txt",
+    "host_asset": "syft_1.46.0_darwin_${GOARCH}.tar.gz"
+  },
+  "checksum": "dist/checksums.txt",
+  "archives": [
+    {
+      "id": "darwin-amd64",
+      "goos": "darwin",
+      "goarch": "amd64",
+      "cgo": "1",
+      "name": "pushover_{{ .Version }}_darwin_amd64.tar.gz",
+      "format": "tar.gz",
+      "binary": "dist/darwin-amd64_darwin_amd64_v1/pushover",
+      "sbom": "dist/pushover_{{ .Version }}_darwin_amd64.spdx.json",
+      "provenance_subject": "dist/pushover_*_darwin_amd64.tar.gz"
+    },
+    {
+      "id": "darwin-arm64",
+      "goos": "darwin",
+      "goarch": "arm64",
+      "cgo": "1",
+      "name": "pushover_{{ .Version }}_darwin_arm64.tar.gz",
+      "format": "tar.gz",
+      "binary": "dist/darwin-arm64_darwin_arm64_v8.0/pushover",
+      "sbom": "dist/pushover_{{ .Version }}_darwin_arm64.spdx.json",
+      "provenance_subject": "dist/pushover_*_darwin_arm64.tar.gz"
+    },
+    {
+      "id": "linux-amd64",
+      "goos": "linux",
+      "goarch": "amd64",
+      "cgo": "0",
+      "name": "pushover_{{ .Version }}_linux_amd64.tar.gz",
+      "format": "tar.gz",
+      "binary": "dist/linux-amd64_linux_amd64_v1/pushover",
+      "sbom": "dist/pushover_{{ .Version }}_linux_amd64.spdx.json",
+      "provenance_subject": "dist/pushover_*_linux_amd64.tar.gz"
+    },
+    {
+      "id": "linux-arm64",
+      "goos": "linux",
+      "goarch": "arm64",
+      "cgo": "0",
+      "name": "pushover_{{ .Version }}_linux_arm64.tar.gz",
+      "format": "tar.gz",
+      "binary": "dist/linux-arm64_linux_arm64_v8.0/pushover",
+      "sbom": "dist/pushover_{{ .Version }}_linux_arm64.spdx.json",
+      "provenance_subject": "dist/pushover_*_linux_arm64.tar.gz"
+    },
+    {
+      "id": "windows-amd64",
+      "goos": "windows",
+      "goarch": "amd64",
+      "cgo": "0",
+      "name": "pushover_{{ .Version }}_windows_amd64.zip",
+      "format": "zip",
+      "binary": "dist/windows-amd64_windows_amd64_v1/pushover.exe",
+      "sbom": "dist/pushover_{{ .Version }}_windows_amd64.spdx.json",
+      "provenance_subject": "dist/pushover_*_windows_amd64.zip"
+    },
+    {
+      "id": "windows-arm64",
+      "goos": "windows",
+      "goarch": "arm64",
+      "cgo": "0",
+      "name": "pushover_{{ .Version }}_windows_arm64.zip",
+      "format": "zip",
+      "binary": "dist/windows-arm64_windows_arm64_v8.0/pushover.exe",
+      "sbom": "dist/pushover_{{ .Version }}_windows_arm64.spdx.json",
+      "provenance_subject": "dist/pushover_*_windows_arm64.zip"
+    }
+  ],
+  "provenance_subjects": [
+    "dist/pushover_*_darwin_amd64.tar.gz",
+    "dist/pushover_*_darwin_arm64.tar.gz",
+    "dist/pushover_*_linux_amd64.tar.gz",
+    "dist/pushover_*_linux_arm64.tar.gz",
+    "dist/pushover_*_windows_amd64.zip",
+    "dist/pushover_*_windows_arm64.zip",
+    "dist/checksums.txt"
+  ],
+  "homebrew": {
+    "owner": "jurgenj136/homebrew-tap",
+    "formula": "Formula/pushover.rb",
+    "pull_request": true
+  }
+}

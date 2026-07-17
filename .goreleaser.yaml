@@ -1,0 +1,95 @@
+version: 2
+project_name: pushover
+
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - id: darwin-amd64
+    main: ./cmd/pushover
+    binary: pushover
+    goos: [darwin]
+    goarch: [amd64]
+    env: [CGO_ENABLED=1]
+    ldflags:
+      - -s -w -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Version={{ .Version }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Commit={{ .Commit }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Date={{ .Date }}
+  - id: darwin-arm64
+    main: ./cmd/pushover
+    binary: pushover
+    goos: [darwin]
+    goarch: [arm64]
+    env: [CGO_ENABLED=1]
+    ldflags:
+      - -s -w -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Version={{ .Version }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Commit={{ .Commit }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Date={{ .Date }}
+  - id: linux-amd64
+    main: ./cmd/pushover
+    binary: pushover
+    goos: [linux]
+    goarch: [amd64]
+    env: [CGO_ENABLED=0]
+    ldflags:
+      - -s -w -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Version={{ .Version }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Commit={{ .Commit }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Date={{ .Date }}
+  - id: linux-arm64
+    main: ./cmd/pushover
+    binary: pushover
+    goos: [linux]
+    goarch: [arm64]
+    env: [CGO_ENABLED=0]
+    ldflags:
+      - -s -w -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Version={{ .Version }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Commit={{ .Commit }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Date={{ .Date }}
+  - id: windows-amd64
+    main: ./cmd/pushover
+    binary: pushover
+    goos: [windows]
+    goarch: [amd64]
+    env: [CGO_ENABLED=0]
+    ldflags:
+      - -s -w -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Version={{ .Version }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Commit={{ .Commit }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Date={{ .Date }}
+  - id: windows-arm64
+    main: ./cmd/pushover
+    binary: pushover
+    goos: [windows]
+    goarch: [arm64]
+    env: [CGO_ENABLED=0]
+    ldflags:
+      - -s -w -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Version={{ .Version }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Commit={{ .Commit }} -X github.com/jurgenj136/pushover-cli/internal/buildinfo.Date={{ .Date }}
+
+archives:
+  - id: default
+    ids: [darwin-amd64, darwin-arm64, linux-amd64, linux-arm64, windows-amd64, windows-arm64]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - id: binaries
+    artifacts: binary
+    cmd: syft
+    args: ["$artifact", "-o", "spdx-json=$document"]
+    documents: ["{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}.spdx.json"]
+
+release:
+  github:
+    owner: jurgenj136
+    name: pushover-cli
+
+brews:
+  - name: pushover
+    repository:
+      owner: jurgenj136
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      pull_request:
+        enabled: true
+    directory: Formula
+    homepage: https://github.com/jurgenj136/pushover-cli
+    description: Unofficial command-line client for the Pushover Message API
+    install: |
+      bin.install "pushover"
