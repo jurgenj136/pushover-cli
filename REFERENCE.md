@@ -1,7 +1,7 @@
 # Command reference
 
-This reference describes the checked-in pre-release command tree. Global flags
-may appear before or after a command path:
+This reference describes the supported v0.1.3 command tree. Global flags may
+appear before or after a command path:
 
 ```text
 pushover setup

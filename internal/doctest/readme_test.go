@@ -1,7 +1,7 @@
 package doctest
 
 import (
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,20 +12,10 @@ import (
 	"github.com/jurgenj136/pushover-cli/internal/output"
 )
 
-const v013ReleaseHeading = "### Install supported v0.1.3"
-
-var v013ReleaseSectionContracts = []string{
-	"brew install jurgenj136/tap/pushover",
-	"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.3",
-	"npx --yes skills@1.5.9 add jurgenj136/pushover-cli --skill pushover-cli --yes",
-	"pushover_0.1.3_<os>_<arch>.tar.gz",
-	"pushover_0.1.3_<os>_<arch>.zip",
-	"shasum -a 256 -c -",
-	"sha256sum --check -",
-	"Get-FileHash -Algorithm SHA256",
-	"gh attestation verify \"$archive\" --repo jurgenj136/pushover-cli",
-	"gh attestation verify checksums.txt --repo jurgenj136/pushover-cli",
-}
+const (
+	dryRunCommand   = `pushover --json send --to <recipient-alias> --dry-run "message"`
+	realSendCommand = `pushover --json send --to <recipient-alias> "message"`
+)
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
@@ -55,118 +45,67 @@ func requireText(t *testing.T, document, name string, required ...string) {
 	}
 }
 
-func lineValue(t *testing.T, document, prefix string) string {
-	t.Helper()
-	for _, line := range strings.Split(document, "\n") {
-		if strings.HasPrefix(line, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
-		}
-	}
-	t.Fatalf("missing line prefix %q", prefix)
-	return ""
-}
-
-func TestREADMEInstallCredentialsAndVersionContracts(t *testing.T) {
+func TestREADMEIsCompactUserGuide(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
-	skill := readRepoFile(t, filepath.Join(".claude", "skills", "pushover-cli", "SKILL.md"))
 	validator := readRepoFile(t, filepath.Join("scripts", "validate-skill.sh"))
-
-	skillVersion := lineValue(t, skill, "Skill version: ")
-	minimumCLI := lineValue(t, skill, "Minimum CLI version: ")
-	skillsCLIMatch := regexp.MustCompile(`skills@([0-9]+\.[0-9]+\.[0-9]+)`).FindStringSubmatch(validator)
-	if len(skillsCLIMatch) != 2 {
+	skillsCLI := regexp.MustCompile(`skills@([0-9]+\.[0-9]+\.[0-9]+)`).FindStringSubmatch(validator)
+	if len(skillsCLI) != 2 {
 		t.Fatal("validate-skill.sh does not pin a semantic skills CLI version")
 	}
-
 	requireText(t, readme, "README.md",
-		"unofficial, outbound-only",
+		"unofficial, outbound-only", "supported pre-1.0 release",
+		"## Features", "## Installation",
+		"brew install jurgenj136/tap/pushover",
+		"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.3",
+		"npx --yes skills@"+skillsCLI[1]+" add jurgenj136/pushover-cli --skill pushover-cli --yes",
+		"The Agent Skill does not install the native `pushover` binary.",
 		"git clone https://github.com/jurgenj136/pushover-cli.git",
-		"go install ./cmd/pushover",
-		"Skill version `"+skillVersion+"` requires CLI version `"+minimumCLI+"` or newer",
-		"npx --yes skills@"+skillsCLIMatch[1]+" add . --skill pushover-cli --agent codex --yes",
-		"The skill does not install the native `pushover` binary",
-		"The published skill is available with the pinned skills CLI",
-		"Pushover dashboard",
-		"register your own Pushover application",
-		"required string fields `token` and `user_key`",
-		"optional string field `e2ee_key`",
-		"Unknown, duplicate, missing, null, or wrongly typed fields are rejected",
-	)
-	if strings.Contains(readme, "non-interactive workflow") {
-		t.Fatal("README calls secret-prompting add commands non-interactive")
-	}
-	requireText(t, readme, "README.md", "still interactive", "require a terminal")
-	if output.SchemaVersion != 1 || !strings.Contains(readme, "schema version 1") {
+		"go install ./cmd/pushover", "## Quick start", "pushover setup",
+		dryRunCommand, realSendCommand, "## Common examples",
+		"## Output and completion", "schema version 1", "## Safety",
+		"credentials for your own Pushover account and application",
+		"non-idempotent", "at most once", "never automatically retries", "ambiguous",
+		"[Command reference](REFERENCE.md)", "[Security model](SECURITY.md)",
+		"[v0.1.3 release](https://github.com/jurgenj136/pushover-cli/releases/tag/v0.1.3)")
+	if output.SchemaVersion != 1 {
 		t.Fatalf("README/output schema mismatch: code=%d", output.SchemaVersion)
+	}
+	if lines := strings.Count(readme, "\n") + 1; lines > 180 {
+		t.Fatalf("README has %d lines, want at most 180", lines)
+	}
+	for _, removed := range []string{"`v0.1.0` is tagged", "PUSHOVER_LIVE_CONFIRM", "pins resolved addresses against DNS rebinding", "reuses it for AES and HMAC"} {
+		if strings.Contains(readme, removed) {
+			t.Errorf("README retains detailed material %q", removed)
+		}
 	}
 }
 
-func TestREADMEAnnouncesSupportedV013Release(t *testing.T) {
+func TestREADMEShowsDryRunBeforeExplicitSend(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
-
-	requireText(t, readme, "README.md",
-		"`v0.1.0` is tagged, but its release workflow failed before publishing artifacts",
-		"`v0.1.1` was released, but its Darwin arm64 binary reported development metadata",
-		"its Homebrew publication pushed `Formula/pushover.rb` directly to the tap's `main` branch",
-		"`v0.1.2` was released, but versioned `go install` reported `version=dev` and `commit=unknown`",
-		"`v0.1.3` is the supported pre-1.0 release",
-		"`v0.1.0` through `v0.1.2` are unsupported",
-		"Release archives and Homebrew install a binary with linker-injected version, commit, and build date metadata.",
-		"Versioned `go install` discovers its version from Go module metadata; commit and build date may remain `unknown`.",
-		"checksums.txt",
-		"GitHub artifact attestations",
-	)
-	requireText(t, readme, "README.md", v013ReleaseSectionContracts...)
-	if err := validateV013ReleasePathPlacement(readme); err != nil {
+	if err := validateFirstSendOrder(readme); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateV013ReleaseAnnouncement(readme); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Run("rejects a conditional release claim", func(t *testing.T) {
-		mutated := readme + "\nHomebrew becomes supported only after the public release succeeds.\n"
-		if err := validateV013ReleaseAnnouncement(mutated); err == nil {
-			t.Fatal("validator accepted a conditional v0.1.3 release claim")
+	t.Run("rejects reversed commands", func(t *testing.T) {
+		mutated := strings.Replace(readme, dryRunCommand, "__DRY_RUN__", 1)
+		mutated = strings.Replace(mutated, realSendCommand, dryRunCommand, 1)
+		mutated = strings.Replace(mutated, "__DRY_RUN__", realSendCommand, 1)
+		if err := validateFirstSendOrder(mutated); err == nil {
+			t.Fatal("validator accepted a real send before the dry run")
 		}
 	})
 }
 
-func validateV013ReleasePathPlacement(readme string) error {
-	sectionStart := strings.Index(readme, v013ReleaseHeading)
-	if sectionStart < 0 {
-		return fmt.Errorf("README.md is missing %q", v013ReleaseHeading)
+func validateFirstSendOrder(readme string) error {
+	dryRunIndex := strings.Index(readme, dryRunCommand)
+	if dryRunIndex < 0 {
+		return errors.New("README is missing the dry-run command")
 	}
-	sectionEnd := len(readme)
-	if nextHeading := strings.Index(readme[sectionStart+len(v013ReleaseHeading):], "\n## "); nextHeading >= 0 {
-		sectionEnd = sectionStart + len(v013ReleaseHeading) + nextHeading
+	realSendIndex := strings.Index(readme, realSendCommand)
+	if realSendIndex < 0 {
+		return errors.New("README is missing the explicit send command")
 	}
-
-	section := readme[sectionStart:sectionEnd]
-	outsideSection := readme[:sectionStart] + readme[sectionEnd:]
-	for _, contract := range v013ReleaseSectionContracts {
-		if !strings.Contains(section, contract) {
-			return fmt.Errorf("README.md is missing release-section contract %q", contract)
-		}
-		if strings.Contains(outsideSection, contract) {
-			return fmt.Errorf("README.md contains release-section contract %q outside %q", contract, v013ReleaseHeading)
-		}
-	}
-	return nil
-}
-
-func validateV013ReleaseAnnouncement(readme string) error {
-	for _, conditionalClaim := range []string{
-		"No supported release exists yet",
-		"Until the `v0.1.3` release workflow succeeds",
-		"become supported only after that public release succeeds",
-		"after the public `v0.1.3` release succeeds",
-		"after the public release succeeds",
-		"do not exist yet",
-	} {
-		if strings.Contains(readme, conditionalClaim) {
-			return fmt.Errorf("README.md contains conditional release claim %q", conditionalClaim)
-		}
+	if realSendIndex <= dryRunIndex {
+		return errors.New("README must show the dry run before the real send")
 	}
 	return nil
 }
@@ -201,21 +140,9 @@ func TestSecurityAndLiveDocumentationContracts(t *testing.T) {
 	security := readRepoFile(t, "SECURITY.md")
 
 	requireText(t, readme, "README.md",
-		"valid 64-hex-character key",
-		"no plaintext fallback or mixed encrypted/plaintext batch",
-		"message, title, URL, and URL title",
-		"reuses it for AES and HMAC",
-		"no replay or reordering protection",
-		"compression leaks approximate plaintext length",
-		"chiefly protects against off-machine disclosure",
-		"not local same-user compromise",
-		"pins resolved addresses against DNS rebinding",
-		"bounds streamed bytes regardless of `Content-Length`",
-		"source URL as attachment metadata",
-		"PUSHOVER_LIVE_CONFIRM=YES go test -tags=live ./internal/live -run TestLiveSend -v",
-		"consumes one message from the dedicated application's quota",
-		"exactly one lowest-priority (`-2`)",
-	)
+		"[Security model](SECURITY.md)", "public HTTPS",
+		"End-to-end encryption is fail-closed",
+		"never automatically retries", "ambiguous")
 	requireText(t, security, "SECURITY.md",
 		"read or use those secrets without a new CLI prompt",
 		"chiefly protects backups, sync copies, and stolen media",
