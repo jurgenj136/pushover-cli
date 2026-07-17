@@ -1,13 +1,18 @@
 package preflight
 
 import (
+	"crypto/aes"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"unicode/utf8"
 
 	"github.com/jurgenj136/pushover-cli/internal/apperror"
 	"github.com/jurgenj136/pushover-cli/internal/domain"
 )
+
+const maxGzipWireOverhead = 32
 
 // validateWirePayload applies only transformed-wire constraints. In
 // particular, it never applies plaintext rune limits to encrypted Base64.
@@ -37,9 +42,9 @@ func validateWirePayload(payload domain.TargetPayload) error {
 	}
 	if message.Encrypted {
 		for _, field := range []struct {
-			name  string
-			value string
-			limit int
+			name     string
+			value    string
+			maxRunes int
 		}{
 			{"message", message.Body, domain.MaxBodyRunes},
 			{"title", message.Title, domain.MaxTitleRunes},
@@ -49,12 +54,27 @@ func validateWirePayload(payload domain.TargetPayload) error {
 			if field.value == "" {
 				continue
 			}
-			if len(field.value) > field.limit || !validEnvelope(field.value) {
+			if len(field.value) > encryptedWireLimit(field.maxRunes) || !validEnvelope(field.value) {
 				return wireError(field.name)
 			}
 		}
 	}
 	return nil
+}
+
+// encryptedWireLimit bounds the Base64 envelope produced by e2ee.encryptField
+// for a rune-limited plaintext. Each supported rune may occupy utf8.UTFMax
+// bytes. e2ee.gzipBytes uses one gzip member with a 10-byte header and 8-byte
+// footer; for every supported field, its DEFLATE payload is one data block
+// capped by a stored block (plaintext plus 5 bytes), followed by a 5-byte
+// final empty block. maxGzipWireOverhead conservatively rounds that 28-byte
+// gzip overhead to 32 bytes before CBC padding, IV/HMAC, and Base64 expansion.
+func encryptedWireLimit(maxRunes int) int {
+	maxPlaintextBytes := maxRunes * utf8.UTFMax
+	maxCompressedBytes := maxPlaintextBytes + maxGzipWireOverhead
+	paddedBytes := maxCompressedBytes + aes.BlockSize - maxCompressedBytes%aes.BlockSize
+	envelopeBytes := aes.BlockSize + paddedBytes + sha256.Size
+	return base64.StdEncoding.EncodedLen(envelopeBytes)
 }
 
 func validEnvelope(value string) bool {

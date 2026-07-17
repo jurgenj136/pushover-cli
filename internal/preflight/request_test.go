@@ -157,17 +157,13 @@ func TestBuilderRejectsConflictingAttachmentBeforeReads(t *testing.T) {
 	}
 }
 
-func TestBuilderRejectsPoorlyCompressibleEncryptedExpansion(t *testing.T) {
+func TestBuilderAcceptsPoorlyCompressibleEncryptedMaximumUnicodeBody(t *testing.T) {
 	input := suppliedInput(true)
-	var body strings.Builder
-	for i := 0; i < domain.MaxBodyRunes; i++ {
-		body.WriteRune(rune(0x1000 + i))
-	}
-	input.Body.Value = body.String()
+	input.Body.Value = maximumPoorlyCompressibleUnicode(domain.MaxBodyRunes)
 	b := Builder{Resolver: &resolver.Resolver{}, Encryptor: e2ee.Encryptor{Random: bytes.NewReader(bytes.Repeat([]byte{0x42}, 16))}, Scope: testScope(t)}
 	plan, result, err := b.Build(context.Background(), Request{Resolve: input})
-	if err == nil || !plan.zero() || result != nil {
-		t.Fatalf("expected post-encryption wire rejection, plan=%#v result=%#v err=%v", plan, result, err)
+	if err != nil || result != nil || !plan.IsValid() {
+		t.Fatalf("maximum encrypted Unicode body rejected: plan=%#v result=%#v err=%v", plan, result, err)
 	}
 }
 
