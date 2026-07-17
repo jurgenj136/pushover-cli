@@ -28,9 +28,10 @@ func TestIsolatedInstall(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(source, "SKILL.md"), canonical, 0o600); err != nil {
 				t.Fatalf("write isolated skill source: %v", err)
 			}
-			command := exec.Command("npx", "--yes", "skills@1.5.9", "add", ".", "--skill", "pushover-cli", "--agent", agent, "--copy", "--global")
+			command := exec.Command("npx", "--yes", "skills@1.5.9", "add", ".", "--skill", "pushover-cli", "--agent", agent, "--copy", "--global", "--yes")
 			command.Dir = source
 			command.Env = append(os.Environ(),
+				"CI=1",
 				"DISABLE_TELEMETRY=1",
 				"DO_NOT_TRACK=1",
 				"NO_UPDATE_NOTIFIER=1",
@@ -45,7 +46,6 @@ func TestIsolatedInstall(t *testing.T) {
 			if err := command.Run(); err != nil {
 				t.Fatalf("pinned %s install failed: %v\nstdout: %s\nstderr: %s", agent, err, stdout.String(), stderr.String())
 			}
-
 			installedPath := filepath.Join(home, ".claude", "skills", "pushover-cli", "SKILL.md")
 			if agent == "codex" {
 				installedPath = filepath.Join(home, ".agents", "skills", "pushover-cli", "SKILL.md")

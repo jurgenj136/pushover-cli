@@ -17,7 +17,7 @@ const v010ReleaseHeading = "### Install v0.1.0 after the public release"
 var v010ReleaseSectionContracts = []string{
 	"brew install jurgenj136/tap/pushover",
 	"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.0",
-	"npx skills add jurgenj136/pushover-cli --skill pushover-cli",
+	"npx --yes skills@1.5.9 add jurgenj136/pushover-cli --skill pushover-cli --yes",
 	"pushover_0.1.0_<os>_<arch>.tar.gz",
 	"pushover_0.1.0_<os>_<arch>.zip",
 	"shasum -a 256 -c -",
@@ -83,7 +83,7 @@ func TestREADMEInstallCredentialsAndVersionContracts(t *testing.T) {
 		"git clone https://github.com/jurgenj136/pushover-cli.git",
 		"go install ./cmd/pushover",
 		"Skill version `"+skillVersion+"` requires CLI version `"+minimumCLI+"` or newer",
-		"npx --yes skills@"+skillsCLIMatch[1]+" add . --skill pushover-cli --agent codex",
+		"npx --yes skills@"+skillsCLIMatch[1]+" add . --skill pushover-cli --agent codex --yes",
 		"The skill does not install the native `pushover` binary",
 		"No Homebrew formula or release archive is claimed",
 		"Pushover dashboard",

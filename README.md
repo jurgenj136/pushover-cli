@@ -86,7 +86,7 @@ claimed before the public release succeeds. From a clone, install only this
 skill for an agent with the pinned skills CLI:
 
 ```sh
-npx --yes skills@1.5.9 add . --skill pushover-cli --agent codex
+npx --yes skills@1.5.9 add . --skill pushover-cli --agent codex --yes
 ```
 
 Omit `--skill pushover-cli` to install every discoverable skill in the
@@ -94,7 +94,7 @@ repository. Inspect the installed policy before use. After the public `v0.1.0`
 release succeeds, install the published portable skill with:
 
 ```sh
-npx skills add jurgenj136/pushover-cli --skill pushover-cli
+npx --yes skills@1.5.9 add jurgenj136/pushover-cli --skill pushover-cli --yes
 ```
 
 ## First run
