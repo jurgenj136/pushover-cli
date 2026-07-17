@@ -24,6 +24,8 @@ type rootCommand struct {
 	Timeout string `name:"timeout" help:"Total operation timeout (1s through 15m)."`
 
 	Send       SendCommand       `cmd:"" help:"Send a message."`
+	Profiles   profilesCommand   `cmd:"" help:"Manage application profiles."`
+	Recipients recipientsCommand `cmd:"" help:"Manage recipient aliases."`
 	Completion completionCommand `cmd:"" help:"Print shell completion."`
 }
 
@@ -68,6 +70,10 @@ func Execute(ctx context.Context, args []string, streams IO, deps Dependencies) 
 	switch selected {
 	case "send":
 		return executeSend(ctx, streams, deps, cli, parsed)
+	case "profiles add", "profiles list", "profiles show", "profiles use", "profiles remove":
+		return executeProfiles(ctx, streams, deps, cli, parsed, selected)
+	case "recipients add", "recipients list", "recipients show", "recipients validate", "recipients remove":
+		return executeRecipients(ctx, streams, deps, cli, parsed, selected)
 	case "completion":
 		return executeCompletion(streams, deps, mode, cli.Completion, cli.NoColor)
 	default:
@@ -79,7 +85,14 @@ func selectedCommand(ctx *kong.Context) string {
 	if ctx == nil || ctx.Selected() == nil {
 		return ""
 	}
-	return ctx.Selected().Name
+	var command []string
+	for _, part := range strings.Fields(ctx.Command()) {
+		if strings.HasPrefix(part, "<") {
+			break
+		}
+		command = append(command, part)
+	}
+	return strings.Join(command, " ")
 }
 
 func selectedMode(jsonMode, plainMode bool) output.Mode {
@@ -133,21 +146,47 @@ func scannedBool(arg, flag string) (bool, bool) {
 }
 
 func renderParseError(streams IO, deps Dependencies, args []string, _ error) int {
-	command := "send"
-	for _, arg := range args {
+	return renderError(streams, deps, preScannedMode(args), preScannedCommand(args), apperror.New("invalid_command", apperror.CategoryUsage, "invalid command line"), preScannedNoColor(args))
+}
+
+// preScannedCommand is intentionally conservative. Parse failures do not
+// provide a resolved command path, so only actual command tokens are used;
+// values consumed by global flags are never mistaken for commands.
+func preScannedCommand(args []string) string {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
 		if arg == "--" {
 			break
 		}
-		if arg == "completion" {
-			command = "completion"
-			break
+		if arg == "--profile" || arg == "--timeout" {
+			index++
+			continue
 		}
-		if arg == "send" {
-			command = "send"
-			break
+		if strings.HasPrefix(arg, "--profile=") || strings.HasPrefix(arg, "--timeout=") || strings.HasPrefix(arg, "-") {
+			continue
+		}
+		switch arg {
+		case "send", "completion":
+			return arg
+		case "profiles":
+			if index+1 < len(args) {
+				switch args[index+1] {
+				case "add", "list", "show", "use", "remove":
+					return "profiles " + args[index+1]
+				}
+			}
+			return "profiles list"
+		case "recipients":
+			if index+1 < len(args) {
+				switch args[index+1] {
+				case "add", "list", "show", "validate", "remove":
+					return "recipients " + args[index+1]
+				}
+			}
+			return "recipients list"
 		}
 	}
-	return renderError(streams, deps, preScannedMode(args), command, apperror.New("invalid_command", apperror.CategoryUsage, "invalid command line"), preScannedNoColor(args))
+	return "send"
 }
 
 func renderError(streams IO, deps Dependencies, mode output.Mode, command string, err *apperror.Error, noColor bool) int {
