@@ -5,10 +5,14 @@ Message API. It is intended for people, scripts, and explicitly authorised AI
 agents. The project is still pre-release: use source builds and review every
 send before allowing an external side effect.
 
-## Install from source
+## Installation
 
-The checked-in source is the supported installation path until a release is
-published:
+`v0.1.0` has not been published. Until its public tag exists and the release
+workflow succeeds, a source build is the only supported installation path. The
+Homebrew, release-archive, and versioned `go install` paths below become
+supported only after that public release succeeds; they do not exist yet.
+
+### Build from source
 
 ```sh
 git clone https://github.com/jurgenj136/pushover-cli.git
@@ -16,19 +20,61 @@ cd pushover-cli
 go install ./cmd/pushover
 ```
 
+### Install v0.1.0 after the public release
+
+After GitHub shows the public `v0.1.0` tag and its release workflow has
+succeeded, use one of these supported paths:
+
+```sh
+brew install jurgenj136/tap/pushover
+```
+
+```sh
+go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.0
+```
+
+The Homebrew release workflow opens a formula pull request in
+`jurgenj136/homebrew-tap`; the Homebrew command is available once that formula
+is merged. For an archive, download the archive for your operating system and
+architecture plus its matching `checksums.txt` from the `v0.1.0` GitHub Release.
+Archive names are `pushover_0.1.0_<os>_<arch>.tar.gz` on macOS and Linux, and
+`pushover_0.1.0_<os>_<arch>.zip` on Windows.
+
+Before extracting an archive, verify the downloaded archive against the
+published checksum. Replace the value below with the archive you downloaded:
+
+```sh
+archive=pushover_0.1.0_darwin_arm64.tar.gz
+checksum=$(grep " $archive$" checksums.txt) && printf '%s\n' "$checksum" | shasum -a 256 -c -
+```
+
+The release workflow also publishes GitHub artifact attestations for every
+archive and for `checksums.txt`. These are attestations, not detached signature
+files. With the GitHub CLI installed, verify both the archive provenance and
+the checksum file:
+
+```sh
+gh attestation verify "$archive" --repo jurgenj136/pushover-cli
+gh attestation verify checksums.txt --repo jurgenj136/pushover-cli
+```
+
 The portable Agent Skill is in `.claude/skills/pushover-cli/SKILL.md`. Skill
-version `0.1.0` requires CLI version `0.1.0` or newer. From a clone, install only
-this skill for an agent with the pinned skills CLI:
+version `0.1.0` requires CLI version `0.1.0` or newer. The skill does not
+install the native `pushover` binary. No Homebrew formula or release archive is
+claimed before the public release succeeds. From a clone, install only this
+skill for an agent with the pinned skills CLI:
 
 ```sh
 npx --yes skills@1.5.9 add . --skill pushover-cli --agent codex
 ```
 
 Omit `--skill pushover-cli` to install every discoverable skill in the
-repository. Inspect the installed policy before use. The skill does not install
-the native `pushover` binary. No Homebrew formula or release archive is claimed
-here; those commands become supported only after a checked release is
-published.
+repository. Inspect the installed policy before use. After the public `v0.1.0`
+release succeeds, install the published portable skill with:
+
+```sh
+npx skills add jurgenj136/pushover-cli --skill pushover-cli
+```
 
 ## First run
 

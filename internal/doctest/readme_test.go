@@ -76,9 +76,6 @@ func TestREADMEInstallCredentialsAndVersionContracts(t *testing.T) {
 		"optional string field `e2ee_key`",
 		"Unknown, duplicate, missing, null, or wrongly typed fields are rejected",
 	)
-	if strings.Contains(readme, "brew install") || strings.Contains(readme, "/releases/download/") {
-		t.Fatal("README claims a release installation channel before release configuration is supported")
-	}
 	if strings.Contains(readme, "non-interactive workflow") {
 		t.Fatal("README calls secret-prompting add commands non-interactive")
 	}
@@ -86,6 +83,21 @@ func TestREADMEInstallCredentialsAndVersionContracts(t *testing.T) {
 	if output.SchemaVersion != 1 || !strings.Contains(readme, "schema version 1") {
 		t.Fatalf("README/output schema mismatch: code=%d", output.SchemaVersion)
 	}
+}
+
+func TestREADMEKeepsV010ReleasePathsFutureGated(t *testing.T) {
+	readme := readRepoFile(t, "README.md")
+
+	requireText(t, readme, "README.md",
+		"`v0.1.0` has not been published",
+		"Until its public tag exists and the release workflow succeeds, a source build is the only supported installation path",
+		"Homebrew, release-archive, and versioned `go install` paths below become supported only after that public release succeeds; they do not exist yet",
+		"brew install jurgenj136/tap/pushover",
+		"go install github.com/jurgenj136/pushover-cli/cmd/pushover@v0.1.0",
+		"checksums.txt",
+		"GitHub artifact attestations",
+		"npx skills add jurgenj136/pushover-cli --skill pushover-cli",
+	)
 }
 
 func TestPublicDocsContainNoCredentialEchoExample(t *testing.T) {
