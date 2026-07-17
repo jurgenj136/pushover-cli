@@ -24,8 +24,10 @@ type rootCommand struct {
 	Timeout string `name:"timeout" help:"Total operation timeout (1s through 15m)."`
 
 	Send       SendCommand       `cmd:"" help:"Send a message."`
+	Setup      setupCommand      `cmd:"" help:"Interactively configure Pushover."`
 	Profiles   profilesCommand   `cmd:"" help:"Manage application profiles."`
 	Recipients recipientsCommand `cmd:"" help:"Manage recipient aliases."`
+	Auth       authCommand       `cmd:"" help:"Inspect or migrate authentication storage."`
 	Completion completionCommand `cmd:"" help:"Print shell completion."`
 }
 
@@ -59,26 +61,53 @@ func Execute(ctx context.Context, args []string, streams IO, deps Dependencies) 
 	if parsed == nil {
 		return renderError(streams, deps, preScannedMode(args), "send", apperror.New("invalid_command", apperror.CategoryUsage, "invalid command line"), preScannedNoColor(args))
 	}
+	parsedCommand := selectedCommand(parsed)
+	selected := parsedCommand
+	if selected == "auth backend show" {
+		selected = "auth backend"
+	}
 	mode := selectedMode(cli.JSON, cli.Plain)
 	if cli.JSON && cli.Plain {
-		return renderError(streams, deps, mode, selectedCommand(parsed), apperror.New("output_mode_conflict", apperror.CategoryUsage, "--json and --plain cannot be combined"), cli.NoColor)
+		return renderError(streams, deps, mode, selected, apperror.New("output_mode_conflict", apperror.CategoryUsage, "--json and --plain cannot be combined"), cli.NoColor)
 	}
-	selected := selectedCommand(parsed)
+	if parsedCommand == "auth backend show" && explicitAuthBackendShow(args) {
+		return renderError(streams, deps, mode, selected, apperror.New("invalid_command", apperror.CategoryUsage, "invalid command line"), cli.NoColor)
+	}
 	if selected == "" {
 		return renderError(streams, deps, mode, "send", apperror.New("command_required", apperror.CategoryUsage, "a command is required (try 'send')"), cli.NoColor)
 	}
 	switch selected {
 	case "send":
 		return executeSend(ctx, streams, deps, cli, parsed)
+	case "setup":
+		return executeSetup(ctx, streams, deps, cli, parsed)
 	case "profiles add", "profiles list", "profiles show", "profiles use", "profiles remove":
 		return executeProfiles(ctx, streams, deps, cli, parsed, selected)
 	case "recipients add", "recipients list", "recipients show", "recipients validate", "recipients remove":
 		return executeRecipients(ctx, streams, deps, cli, parsed, selected)
+	case "auth status", "auth backend", "auth backend set":
+		return executeAuth(ctx, streams, deps, cli, parsed, selected)
 	case "completion":
 		return executeCompletion(streams, deps, mode, cli.Completion, cli.NoColor)
 	default:
 		return renderError(streams, deps, mode, "send", apperror.New("command_required", apperror.CategoryUsage, "a command is required"), cli.NoColor)
 	}
+}
+
+func explicitAuthBackendShow(args []string) bool {
+	words := make([]string, 0, 3)
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--profile" || arg == "--timeout" {
+			index++
+			continue
+		}
+		if arg == "--" || strings.HasPrefix(arg, "--profile=") || strings.HasPrefix(arg, "--timeout=") || strings.HasPrefix(arg, "-") {
+			continue
+		}
+		words = append(words, arg)
+	}
+	return len(words) == 3 && words[0] == "auth" && words[1] == "backend" && words[2] == "show"
 }
 
 func selectedCommand(ctx *kong.Context) string {
@@ -166,8 +195,21 @@ func preScannedCommand(args []string) string {
 			continue
 		}
 		switch arg {
-		case "send", "completion":
+		case "send", "setup", "completion":
 			return arg
+		case "auth":
+			if index+1 < len(args) {
+				switch args[index+1] {
+				case "status":
+					return "auth status"
+				case "backend":
+					if index+2 < len(args) && args[index+2] == "set" {
+						return "auth backend set"
+					}
+					return "auth backend"
+				}
+			}
+			return "auth"
 		case "profiles":
 			if index+1 < len(args) {
 				switch args[index+1] {

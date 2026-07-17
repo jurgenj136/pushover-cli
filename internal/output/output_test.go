@@ -77,7 +77,7 @@ func TestJSONErrorOneDocument(t *testing.T) {
 }
 
 func TestErrorRenderersAcceptIncompleteParentCommandPaths(t *testing.T) {
-	for _, command := range []string{"profiles", "recipients"} {
+	for _, command := range []string{"profiles", "recipients", "auth"} {
 		for name, renderer := range map[string]Renderer{
 			"human": HumanRenderer{},
 			"json":  JSONRenderer{},

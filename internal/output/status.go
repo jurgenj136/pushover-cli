@@ -311,7 +311,7 @@ func knownCommand(command string) bool {
 		return true
 	}
 	switch command {
-	case "profiles", "profiles list", "profiles show", "recipients", "recipients list", "recipients show", "recipients validate", "sounds", "limits", "auth status", "auth backend", "info", "version", "profiles add", "profiles use", "profiles remove", "recipients add", "recipients remove", "auth backend set", "completion":
+	case "profiles", "profiles list", "profiles show", "recipients", "recipients list", "recipients show", "recipients validate", "sounds", "limits", "auth", "auth status", "auth backend", "info", "version", "profiles add", "profiles use", "profiles remove", "recipients add", "recipients remove", "auth backend set", "completion":
 		return true
 	default:
 		return false
