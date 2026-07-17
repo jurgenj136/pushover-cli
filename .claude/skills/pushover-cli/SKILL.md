@@ -8,7 +8,7 @@ description: Use when a user explicitly requests sending a Pushover notification
 Skill version: 0.1.0
 Minimum CLI version: 0.1.0
 
-Require an existing binary: run `command -v pushover`. For redacted diagnostics, run `pushover --json auth status`. Always invoke `pushover` with `--json`.
+Require an existing binary: run `command -v pushover`. Then run `pushover --json version`. Compare the installed CLI version against the minimum version `0.1.0`; stop and tell the user to upgrade if it is incompatible. For redacted diagnostics, run `pushover --json auth status`. Always invoke `pushover` with `--json`.
 
 ## Authority
 
@@ -27,7 +27,7 @@ Use the current CLI grammar, for example:
 pushover --json send --to <recipient-alias> "<message>"
 ```
 
-Add `--priority 1` or `--priority 2` only with that explicit intent. Priority `2` also requires explicit retry and expiry values and `--yes`. Add only explicitly requested `--attachment <path>` or `--attachment-url <https-url>`, and add `--encrypted` only with explicit encryption intent.
+Add `--priority 1` or `--priority 2` only with that explicit intent. Priority `2` requires explicit retry and expiry values and `--yes`, because agents are always non-interactive. Add only explicitly requested `--attachment <path>` or `--attachment-url <https-url>`, and add `--encrypted` only with explicit encryption intent. `--encrypted` is mutually exclusive with `--attachment`, `--attachment-url`, `--html`, and `--monospace`.
 
 Report ordered per-target outcomes. Do not retry after any failed or ambiguous result. Preserve ambiguity as unknown; send again only after the user sees that result and makes a new explicit request in the current task.
 

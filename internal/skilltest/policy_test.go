@@ -14,6 +14,15 @@ func TestPolicyRequiresExistingBinaryAndRedactedStatus(t *testing.T) {
 	requireSkillText(t, skill, "pushover --json auth status")
 }
 
+func TestPolicyChecksMinimumCLIVersionBeforeSending(t *testing.T) {
+	skill := readSkill(t)
+	requireSkillText(t, skill, "pushover --json version")
+	requireSkillText(t, skill, "Compare the installed CLI version against the minimum version `0.1.0`; stop and tell the user to upgrade if it is incompatible.")
+	if strings.Index(skill, "command -v pushover") > strings.Index(skill, "pushover --json version") {
+		t.Fatal("skill checks the CLI version before confirming the binary is present")
+	}
+}
+
 func TestPolicyUsesJSONForEveryInvocation(t *testing.T) {
 	requireSkillText(t, readSkill(t), "Always invoke `pushover` with `--json`.")
 }
@@ -49,6 +58,10 @@ func TestPolicyRequiresExplicitAttachmentIntent(t *testing.T) {
 
 func TestPolicyRequiresExplicitE2EEIntent(t *testing.T) {
 	requireSkillText(t, readSkill(t), "encryption is explicitly requested in the current task")
+}
+
+func TestPolicyStatesEncryptedModeIncompatibilities(t *testing.T) {
+	requireSkillText(t, readSkill(t), "`--encrypted` is mutually exclusive with `--attachment`, `--attachment-url`, `--html`, and `--monospace`.")
 }
 
 func TestPolicyRefusesConfigurationAndCredentials(t *testing.T) {
@@ -168,6 +181,10 @@ func TestPolicyNeverRetriesFailure(t *testing.T) {
 
 func TestPolicyNeverRetriesAmbiguity(t *testing.T) {
 	requireSkillText(t, readSkill(t), "ambiguous result")
+}
+
+func TestPolicyExplainsPriorityTwoConfirmationForAgents(t *testing.T) {
+	requireSkillText(t, readSkill(t), "Priority `2` requires explicit retry and expiry values and `--yes`, because agents are always non-interactive.")
 }
 
 func TestPolicyExplainsAdvisoryLimitsAndHarnessApproval(t *testing.T) {
