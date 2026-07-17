@@ -86,3 +86,13 @@ jobs:
           echo "$tool_dir" >> "$GITHUB_PATH"
       - name: Build a release snapshot
         run: go run github.com/goreleaser/goreleaser/v2@v2.17.0 release --snapshot --clean
+      - name: Check generated Homebrew formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew ruby -e '
+            require "formulary"
+            path = Pathname.new("dist/homebrew/Formula/pushover.rb").expand_path
+            formula = Formulary.from_contents("pushover", path, path.read)
+            abort "generated formula has no test block" unless formula.test_defined?
+          '

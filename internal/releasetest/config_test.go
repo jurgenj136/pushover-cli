@@ -85,8 +85,14 @@ type workflowContract struct {
 		CancelInProgress bool   `yaml:"cancel-in-progress"`
 	} `yaml:"concurrency"`
 	Jobs map[string]struct {
-		TimeoutMinutes int `yaml:"timeout-minutes"`
+		TimeoutMinutes int            `yaml:"timeout-minutes"`
+		Steps          []workflowStep `yaml:"steps"`
 	} `yaml:"jobs"`
+}
+
+type workflowStep struct {
+	Name string `yaml:"name"`
+	Run  string `yaml:"run"`
 }
 
 type goreleaserConfig struct {
@@ -95,6 +101,7 @@ type goreleaserConfig struct {
 		LDFlags []string `yaml:"ldflags"`
 	} `yaml:"builds"`
 	Brews []struct {
+		Test       string `yaml:"test"`
 		Repository struct {
 			Branch      string `yaml:"branch"`
 			PullRequest struct {
@@ -326,6 +333,16 @@ func TestHomebrewPublicationUsesVersionedPullRequestBranch(t *testing.T) {
 	}
 }
 
+func TestHomebrewFormulaHasOfflineVersionSmokeTest(t *testing.T) {
+	config := readGoReleaserConfig(t)
+	if len(config.Brews) != 1 {
+		t.Fatalf("brews = %d, want 1", len(config.Brews))
+	}
+	if got, want := strings.TrimSpace(config.Brews[0].Test), `system "#{bin}/pushover", "--json", "version"`; got != want {
+		t.Fatalf("Homebrew formula test = %q, want %q", got, want)
+	}
+}
+
 func renderLDFlags(flags []string, version, commit, date string) string {
 	return strings.NewReplacer(
 		"{{ .Version }}", version,
@@ -366,6 +383,45 @@ func TestSnapshotWorkflowsInstallVerifiedSyft(t *testing.T) {
 		if strings.Index(ci, before) > strings.Index(ci, after) {
 			t.Errorf("Syft installer must run %q before %q", before, after)
 		}
+	}
+}
+
+func TestReleaseSnapshotChecksGeneratedHomebrewFormula(t *testing.T) {
+	workflow := readWorkflowContract(t, ".github/workflows/ci.yml")
+	snapshot, ok := workflow.Jobs["release-snapshot"]
+	if !ok {
+		t.Fatal("CI workflow has no release-snapshot job")
+	}
+
+	snapshotIndex := -1
+	formulaCheckIndex := -1
+	for index, step := range snapshot.Steps {
+		switch step.Name {
+		case "Build a release snapshot":
+			snapshotIndex = index
+		case "Check generated Homebrew formula":
+			formulaCheckIndex = index
+			for _, want := range []string{
+				`brew ruby -e`,
+				`require "formulary"`,
+				`Pathname.new("dist/homebrew/Formula/pushover.rb").expand_path`,
+				`Formulary.from_contents("pushover", path, path.read)`,
+				`formula.test_defined?`,
+			} {
+				if !strings.Contains(step.Run, want) {
+					t.Errorf("Homebrew formula check missing %q", want)
+				}
+			}
+		}
+	}
+	if snapshotIndex == -1 {
+		t.Fatal("release snapshot build step not found")
+	}
+	if formulaCheckIndex == -1 {
+		t.Fatal("generated Homebrew formula check step not found")
+	}
+	if formulaCheckIndex <= snapshotIndex {
+		t.Fatal("generated Homebrew formula must be checked after the release snapshot")
 	}
 }
 

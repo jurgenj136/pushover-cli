@@ -93,3 +93,5 @@ brews:
     description: Unofficial command-line client for the Pushover Message API
     install: |
       bin.install "pushover"
+    test: |
+      system "#{bin}/pushover", "--json", "version"
