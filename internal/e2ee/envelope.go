@@ -41,6 +41,7 @@ func encryptField(key []byte, random io.Reader, plaintext string) (string, error
 	envelope := make([]byte, 0, len(iv)+len(ciphertext)+sha256.Size)
 	envelope = append(envelope, iv...)
 	envelope = append(envelope, ciphertext...)
+	// Pushover's compatibility format mandates reusing the AES-CBC key for HMAC.
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write(envelope)
 	envelope = mac.Sum(envelope)

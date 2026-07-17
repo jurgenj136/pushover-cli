@@ -12,6 +12,7 @@ import (
 	"github.com/jurgenj136/pushover-cli/internal/secrets"
 )
 
+// Resolver resolves message input into fully credentialed send drafts.
 type Resolver struct {
 	Config  config.Store
 	Secrets secrets.Store

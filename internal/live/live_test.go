@@ -1,7 +1,7 @@
 //go:build live
 
-// Package live contains the deliberately opt-in Pushover smoke test. It is
-// excluded from ordinary builds and never constructs a client at package init.
+// The live test is excluded from ordinary builds and never constructs a client
+// at package init.
 package live
 
 import (

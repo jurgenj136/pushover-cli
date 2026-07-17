@@ -24,7 +24,7 @@ type rootCommand struct {
 	Timeout string `name:"timeout" help:"Total operation timeout (1s through 15m)."`
 
 	Setup      setupCommand      `cmd:"" help:"Interactively configure Pushover."`
-	Send       SendCommand       `cmd:"" help:"Send a message."`
+	Send       sendCommand       `cmd:"" help:"Send a message."`
 	Profiles   profilesCommand   `cmd:"" help:"Manage application profiles."`
 	Recipients recipientsCommand `cmd:"" help:"Manage recipient aliases."`
 	Sounds     soundsCommand     `cmd:"" help:"List supported Pushover sounds."`
@@ -268,8 +268,7 @@ func newRenderer(streams IO, deps Dependencies, mode output.Mode, noColor bool, 
 	if factory == nil {
 		factory = output.NewFactory()
 	}
-	tty := false
-	tty = terminalFor(streams, target)
+	tty := terminalFor(streams, target)
 	_, noColorEnvironment := deps.environment("NO_COLOR")
 	color := tty && !noColor && !noColorEnvironment
 	return factory.New(mode, output.RenderOptions{TTY: tty, Color: color})

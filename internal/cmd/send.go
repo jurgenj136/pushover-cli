@@ -16,7 +16,7 @@ import (
 	"github.com/jurgenj136/pushover-cli/internal/resolver"
 )
 
-type SendCommand struct {
+type sendCommand struct {
 	To               []string `name:"to" help:"Recipient alias (repeatable)."`
 	Title            string   `name:"title" help:"Message title."`
 	Devices          []string `name:"device" help:"Target device (repeatable)."`
@@ -99,7 +99,7 @@ func executeSend(ctx context.Context, streams IO, deps Dependencies, root rootCo
 	return renderErrorWithColor(streams, deps, mode, "send", apperror.New("delivery_empty", apperror.CategoryInternal, apperror.MessageInternal), root.NoColor)
 }
 
-func (s SendCommand) request(parsed *kong.Context, streams IO, deps Dependencies, profile string) (preflight.Request, error) {
+func (s sendCommand) request(parsed *kong.Context, streams IO, deps Dependencies, profile string) (preflight.Request, error) {
 	stdin, file, positional := flagSeen(parsed, "stdin"), flagSeen(parsed, "file"), positionalSeen(parsed, "body")
 	if countTrue(stdin, file, positional) != 1 {
 		return preflight.Request{}, apperror.New("body_source_conflict", apperror.CategoryUsage, "exactly one message body source is required")

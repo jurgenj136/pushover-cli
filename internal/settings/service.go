@@ -14,11 +14,14 @@ import (
 	"github.com/jurgenj136/pushover-cli/internal/secrets"
 )
 
+// ProfileInput supplies a profile and its secret token for storage.
 type ProfileInput struct {
 	Name     string
 	Token    []byte
 	Defaults config.MessageDefaults
 }
+
+// RecipientInput supplies a recipient and its secret keys for storage.
 type RecipientInput struct {
 	Alias            string
 	UserKey, E2EEKey []byte
@@ -26,22 +29,29 @@ type RecipientInput struct {
 	Devices          []string
 	Validated        bool
 }
+
+// SetupInput supplies the initial configuration and credentials.
 type SetupInput struct {
 	Backend    config.Backend
 	Profile    ProfileInput
 	Recipients []RecipientInput
 }
 
+// RemoveProfileOptions controls default-profile replacement during removal.
 type RemoveProfileOptions struct {
 	ReplaceWith string
 	Force       bool
 }
+
+// ProfileView summarizes a configured profile without exposing its token.
 type ProfileView struct {
 	Name          string
 	Default       bool
 	Defaults      config.MessageDefaults
 	TokenResolves bool
 }
+
+// RecipientView summarizes a configured recipient without exposing its keys.
 type RecipientView struct {
 	Alias                            string
 	Kind                             domain.TargetKind
@@ -49,11 +59,17 @@ type RecipientView struct {
 	Devices                          []string
 	UserKeyResolves, E2EEKeyResolves bool
 }
+
+// SetupView summarizes the configuration created by setup.
 type SetupView struct {
 	Profile    ProfileView
 	Recipients []RecipientView
 }
+
+// SecretConsumer identifies a configuration field that uses a secret.
 type SecretConsumer struct{ Resource, Name, Field string }
+
+// RemovalImpact describes the configuration changes required before removal.
 type RemovalImpact struct {
 	Consumers                           []SecretConsumer
 	DefaultProfile, ReplacementRequired bool
@@ -82,6 +98,7 @@ type Service interface {
 	RecipientUserKey(context.Context, string) ([]byte, error)
 }
 
+// Manager coordinates configuration and secret-storage updates.
 type Manager struct {
 	Config  config.Store
 	Secrets secrets.Store
