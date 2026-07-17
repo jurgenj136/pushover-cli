@@ -125,9 +125,9 @@ func windowsJoin(parts ...string) string {
 	result := ""
 	for index, part := range parts {
 		if index == 0 {
-			part = strings.TrimRight(part, `\\/`)
+			part = strings.TrimRight(part, `\/`)
 		} else {
-			part = strings.Trim(part, `\\/`)
+			part = strings.Trim(part, `\/`)
 		}
 		if result == "" {
 			result = part

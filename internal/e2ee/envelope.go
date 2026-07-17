@@ -76,10 +76,10 @@ func gzipBytes(plaintext []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	writer.Header.ModTime = time.Unix(0, 0).UTC()
-	writer.Header.Name = ""
-	writer.Header.Comment = ""
-	writer.Header.OS = 255
+	writer.ModTime = time.Unix(0, 0).UTC()
+	writer.Name = ""
+	writer.Comment = ""
+	writer.OS = 255
 	if _, err := writer.Write(plaintext); err != nil {
 		_ = writer.Close()
 		clear(output.Bytes())
@@ -93,10 +93,14 @@ func gzipBytes(plaintext []byte) ([]byte, error) {
 }
 
 func pkcs7Pad(input []byte, blockSize int) []byte {
+	if blockSize < 1 || blockSize > 255 {
+		panic("invalid PKCS#7 block size")
+	}
 	padding := blockSize - len(input)%blockSize
 	output := make([]byte, len(input)+padding)
 	copy(output, input)
 	for index := len(input); index < len(output); index++ {
+		// #nosec G115 -- validated blockSize bounds padding to the byte range.
 		output[index] = byte(padding)
 	}
 	return output

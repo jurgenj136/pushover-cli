@@ -45,7 +45,7 @@ func TestRecipientsAddOfflineSkipsAPIAndWipesAnswers(t *testing.T) {
 func TestRecipientsAddAllowsEmptyOptionalE2EEKey(t *testing.T) {
 	userKey := []byte("111111111111111111111111111111")
 	service := &adminSettingsFake{}
-	prompter := &adminPrompterFake{answers: [][]byte{userKey, []byte{}}}
+	prompter := &adminPrompterFake{answers: [][]byte{userKey, {}}}
 	var stdout, stderr bytes.Buffer
 	if got := Execute(context.Background(), []string{"recipients", "add", "ops", "--offline"}, testIO(&stdout, &stderr), Dependencies{Admin: AdminDependencies{Settings: service}, Prompter: prompter}); got != 0 || service.addRecipients != 1 || len(service.recipientInput.E2EEKey) != 0 || !allZero(userKey) {
 		t.Fatalf("exit=%d adds=%d e2ee=%d", got, service.addRecipients, len(service.recipientInput.E2EEKey))

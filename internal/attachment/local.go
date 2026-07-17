@@ -19,11 +19,13 @@ func Local(ctx context.Context, path string) (*domain.Attachment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, apperror.Wrap("attachment_local", apperror.CategoryValidation, "attachment file cannot be read", err, apperror.WithSecrets(path))
 	}
+	// #nosec G304 -- the path is an explicit user-selected attachment input;
+	// policy validation and redaction happen immediately around this open.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, apperror.Wrap("attachment_local", apperror.CategoryValidation, "attachment file cannot be read", err, apperror.WithSecrets(path))
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {

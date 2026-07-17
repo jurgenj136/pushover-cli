@@ -38,7 +38,7 @@ func (e *SendError) Unwrap() error {
 
 // Format has a value receiver so both SendError values and pointers use the
 // redacted rendering. The exported Cause must never be exposed by %#v.
-func (e SendError) Format(state fmt.State, verb rune) { _, _ = io.WriteString(state, e.Error()) }
+func (e SendError) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state, e.Error()) }
 
 func newSendError(cause error, phase TransmissionPhase, possible bool) *SendError {
 	return &SendError{Cause: cause, Phase: phase, TransmissionPossible: possible}
@@ -114,22 +114,26 @@ func safeReceiptID(value string) string {
 		return ""
 	}
 	for _, c := range value {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+		if !isASCIIAlphanumeric(c) {
 			return ""
 		}
 	}
 	return value
 }
-func safeOpaqueID(value string, min, max int) bool {
-	if len(value) < min || len(value) > max {
+func safeOpaqueID(value string, minimum, maximum int) bool {
+	if len(value) < minimum || len(value) > maximum {
 		return false
 	}
 	for _, c := range value {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+		if !isASCIIAlphanumeric(c) && c != '-' && c != '_' {
 			return false
 		}
 	}
 	return true
+}
+
+func isASCIIAlphanumeric(value rune) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }
 
 func redactedTransportError(error) error {

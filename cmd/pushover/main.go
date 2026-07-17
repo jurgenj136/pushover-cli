@@ -1,3 +1,4 @@
+// Package main provides the pushover command-line entry point.
 package main
 
 import (

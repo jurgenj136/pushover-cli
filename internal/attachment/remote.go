@@ -107,6 +107,8 @@ func (r RemoteLoader) Remote(ctx context.Context, source *url.URL) (*domain.Atta
 				return errors.New("redirect limit reached")
 			}
 			// Do not let net/http synthesize Referer or retain any previous headers.
+			// #nosec G119 -- replacing the complete header map is the deliberate
+			// defense: no credential or caller header can cross an origin redirect.
 			request.Header = make(http.Header)
 			request.Header.Del("Referer")
 			_, err := pinned.prepare(phaseCtx, request.URL)
@@ -125,7 +127,7 @@ func (r RemoteLoader) Remote(ctx context.Context, source *url.URL) (*domain.Atta
 		}
 		return nil, remoteFailure(origin, rawSource, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return nil, remoteFailure(origin, rawSource, fmt.Errorf("unexpected HTTP status %d", response.StatusCode))
 	}

@@ -67,7 +67,7 @@ func (d *recordingDialer) DialContext(_ context.Context, _ string, address strin
 	d.addrs = append(d.addrs, address)
 	d.mu.Unlock()
 	left, right := net.Pipe()
-	go right.Close()
+	go func() { _ = right.Close() }()
 	return left, nil
 }
 

@@ -186,7 +186,7 @@ func duplicateAliases(aliases []string) error {
 
 func readBody(source BodySource) (string, error) {
 	var reader io.Reader
-	var close func() error
+	var closeReader func() error
 	switch source.Kind {
 	case BodyPositional:
 		reader = &stringReader{value: source.Value}
@@ -198,20 +198,23 @@ func readBody(source BodySource) (string, error) {
 	case BodyFile:
 		open := source.OpenFile
 		if open == nil {
-			open = func(name string) (io.ReadCloser, error) { return os.Open(name) }
+			open = func(name string) (io.ReadCloser, error) {
+				// #nosec G304 -- name is the explicit user-selected message body file.
+				return os.Open(name)
+			}
 		}
 		file, err := open(source.Value)
 		if err != nil {
 			return "", apperror.New("body_file_unavailable", apperror.CategoryConfig, "message body file is unavailable")
 		}
-		reader, close = file, file.Close
+		reader, closeReader = file, file.Close
 	default:
 		return "", apperror.New("body_source_invalid", apperror.CategoryUsage, "exactly one message body source is required")
 	}
 	data, err := readBoundedBody(io.LimitReader(reader, MaxBodyBytes+1))
 	defer wipe(data)
-	if close != nil {
-		if closeErr := close(); err == nil {
+	if closeReader != nil {
+		if closeErr := closeReader(); err == nil {
 			err = closeErr
 		}
 	}

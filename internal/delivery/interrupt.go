@@ -33,9 +33,9 @@ type monitorState struct {
 	err         error
 }
 
-func startInterruptMonitor(signals <-chan os.Signal, callerCtx, scopeCtx context.Context, cancelConfirmation context.CancelFunc) *interruptMonitor {
+func startInterruptMonitor(callerCtx, scopeCtx context.Context, signals <-chan os.Signal, cancelConfirmation context.CancelFunc) *interruptMonitor {
 	m := &interruptMonitor{commands: make(chan any), stop: make(chan struct{}), done: make(chan struct{})}
-	go m.run(signals, callerCtx, scopeCtx, cancelConfirmation)
+	go m.run(callerCtx, scopeCtx, signals, cancelConfirmation)
 	return m
 }
 
@@ -65,7 +65,7 @@ func (m *interruptMonitor) close() {
 	<-m.done
 }
 
-func (m *interruptMonitor) run(signals <-chan os.Signal, callerCtx, scopeCtx context.Context, cancelConfirmation context.CancelFunc) {
+func (m *interruptMonitor) run(callerCtx, scopeCtx context.Context, signals <-chan os.Signal, cancelConfirmation context.CancelFunc) {
 	defer close(m.done)
 	callerDone := callerCtx.Done()
 	scopeDone := scopeCtx.Done()

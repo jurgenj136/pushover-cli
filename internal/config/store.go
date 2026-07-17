@@ -24,8 +24,12 @@ func (realClock) Now() time.Time { return time.Now() }
 type osFileSystem struct{}
 
 func (osFileSystem) MkdirAll(path string, mode fs.FileMode) error { return os.MkdirAll(path, mode) }
-func (osFileSystem) Open(path string) (File, error)               { return os.Open(path) }
+func (osFileSystem) Open(path string) (File, error) {
+	// #nosec G304 -- FileStore paths are application configuration paths.
+	return os.Open(path)
+}
 func (osFileSystem) OpenFile(path string, flags int, mode fs.FileMode) (File, error) {
+	// #nosec G304 -- FileStore paths are application configuration paths.
 	return os.OpenFile(path, flags, mode)
 }
 func (osFileSystem) Rename(oldPath, newPath string) error      { return os.Rename(oldPath, newPath) }

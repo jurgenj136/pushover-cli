@@ -98,8 +98,8 @@ func validateStrings(values []string, maxCount, maxLen int) error {
 	}
 	return nil
 }
-func safeText(value string, max int) bool {
-	return value != "" && len(value) <= max && !strings.ContainsFunc(value, unicode.IsControl)
+func safeText(value string, maximum int) bool {
+	return value != "" && len(value) <= maximum && !strings.ContainsFunc(value, unicode.IsControl)
 }
 
 func (c *HTTPClient) do(request *http.Request) (*http.Response, traceState, error) {

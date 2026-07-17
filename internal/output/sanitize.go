@@ -31,7 +31,7 @@ func tsvEscape(value string) string {
 			b.WriteString(`\n`)
 		default:
 			if r <= 0x1f || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
-				b.WriteString(fmt.Sprintf(`\u%04X`, r))
+				_, _ = fmt.Fprintf(&b, `\u%04X`, r)
 			} else {
 				b.WriteRune(r)
 			}

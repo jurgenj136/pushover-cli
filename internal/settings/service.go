@@ -404,9 +404,9 @@ func (m *Manager) stage(ctx context.Context, value []byte) (domain.SecretRef, er
 	if m == nil || m.Secrets == nil {
 		return "", settingError("secret_store_unavailable", "secret store is unavailable", apperror.CategoryConfig)
 	}
-	copy := append([]byte(nil), value...)
-	ref, err := m.Secrets.Put(ctx, copy)
-	wipe(copy)
+	owned := append([]byte(nil), value...)
+	ref, err := m.Secrets.Put(ctx, owned)
+	wipe(owned)
 	if err != nil || ref == "" {
 		if ref != "" {
 			if cleanupErr := m.Secrets.Delete(context.Background(), ref); cleanupErr != nil {

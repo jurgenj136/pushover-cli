@@ -110,6 +110,22 @@ func TestGzipBytesUsesDeterministicHeader(t *testing.T) {
 	}
 }
 
+func TestPKCS7PadRejectsInvalidBlockSizes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		size int
+	}{{name: "zero", size: 0}, {name: "too-large", size: 256}} {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("invalid block size did not panic")
+				}
+			}()
+			_ = pkcs7Pad(nil, test.size)
+		})
+	}
+}
+
 func TestDecodeEnvelopeRejectsMalformedAndTamperedInput(t *testing.T) {
 	key, err := ParseKey(testKey)
 	if err != nil {

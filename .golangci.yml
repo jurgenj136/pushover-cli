@@ -12,6 +12,21 @@ linters:
     - unconvert
     - unparam
     - whitespace
+  exclusions:
+    rules:
+      # Public packages are internal to this CLI. Requiring a doc comment on every
+      # exported test seam obscures the security and correctness findings we want
+      # this gate to emphasize.
+      - linters:
+          - revive
+        text: "exported: exported .* should have comment"
+      # Test fixtures intentionally contain fake credentials, controlled paths,
+      # and subprocess invocations. Production code remains fully gosec-checked.
+      - path: _test\.go
+        linters:
+          - gosec
+          - revive
+          - unparam
 
 formatters:
   enable:

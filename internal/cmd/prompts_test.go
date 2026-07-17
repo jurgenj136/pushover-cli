@@ -63,7 +63,7 @@ func TestTerminalPrompterUsesPasswordReaderForSecretOnFileInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	calls := 0
 	var output bytes.Buffer
 	prompt := TerminalPrompter{
@@ -97,7 +97,7 @@ func TestTerminalPrompterWipesOversizedPasswordReaderResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	secret := bytes.Repeat([]byte("x"), maxPromptBytes+1)
 	prompt := TerminalPrompter{
 		Input: file, Stderr: io.Discard, IsTTY: func(io.Reader) bool { return true },

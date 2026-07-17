@@ -3,8 +3,9 @@
 package secrets
 
 import (
-	"golang.org/x/sys/windows"
 	"runtime"
+
+	"golang.org/x/sys/windows"
 )
 
 // protectAgePath removes inherited ACLs and grants only the current user

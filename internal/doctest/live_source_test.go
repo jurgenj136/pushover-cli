@@ -429,7 +429,7 @@ func TestLiveChecksConfirmationAndCredentialsBeforeFactory(t *testing.T) {
 	credentials := strings.Index(function, `os.Getenv("PUSHOVER_LIVE_TOKEN")`)
 	validation := strings.Index(function, "domain.ValidateCredentials")
 	factory := strings.Index(function, "return factory()")
-	if confirmation < 0 || credentials < 0 || validation < 0 || factory < 0 || !(confirmation < credentials && credentials < validation && validation < factory) {
+	if confirmation < 0 || credentials < 0 || validation < 0 || factory < 0 || confirmation >= credentials || credentials >= validation || validation >= factory {
 		t.Fatalf("live opt-in order is not confirmation -> credentials -> validation -> factory")
 	}
 	requireText(t, source, "internal/live/live_test.go",

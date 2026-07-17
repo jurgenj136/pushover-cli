@@ -1,3 +1,4 @@
+// Package cmd defines the pushover command tree and runtime boundaries.
 package cmd
 
 import (
@@ -38,19 +39,6 @@ func (d Dependencies) openAdmin(ctx context.Context) (AdminDependencies, error) 
 
 func hasAdminDependencies(value AdminDependencies) bool {
 	return value.Settings != nil || value.Config != nil || value.SecretFactory != nil || value.BackendMigrator != nil || value.API != nil || value.Build != (buildinfo.Info{})
-}
-
-// loadAdminConfig deliberately does not open the selected secret store. Auth
-// status uses it to report a missing configuration without touching secrets.
-func (d Dependencies) loadAdminConfig(ctx context.Context) (config.Config, error) {
-	admin, err := d.openAdmin(ctx)
-	if err != nil {
-		return config.Config{}, err
-	}
-	if admin.Config == nil {
-		return config.Config{}, apperror.New("configuration_unavailable", apperror.CategoryConfig, "configuration is unavailable")
-	}
-	return admin.Config.Load(ctx)
 }
 
 // openAdminSettings is the explicit persistence boundary. It loads selected

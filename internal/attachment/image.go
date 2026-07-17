@@ -5,9 +5,9 @@ import (
 	"bytes"
 	"fmt"
 	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
+	_ "image/gif"  // Register GIF decoding for image.DecodeConfig.
+	_ "image/jpeg" // Register JPEG decoding for image.DecodeConfig.
+	_ "image/png"  // Register PNG decoding for image.DecodeConfig.
 	"net/http"
 
 	"github.com/jurgenj136/pushover-cli/internal/apperror"
@@ -67,10 +67,6 @@ func imageIdentity(format string) (name, mediaType string, ok bool) {
 
 func invalidScope() error {
 	return apperror.New("attachment_scope", apperror.CategoryInternal, "attachment operation context is not initialized")
-}
-
-func wrapLocal(cause error) error {
-	return apperror.Wrap("attachment_local", apperror.CategoryValidation, "attachment file cannot be read", cause)
 }
 
 func wrapRemote(code, message string, cause error, rawURL string) error {

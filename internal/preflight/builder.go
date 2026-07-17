@@ -1,3 +1,4 @@
+// Package preflight resolves and validates complete sends before side effects.
 package preflight
 
 import (
@@ -40,8 +41,8 @@ func (b *Builder) Build(ctx context.Context, request Request) (FinalizedSendPlan
 	}
 	var remoteURL *url.URL
 	if source := request.Attachment.RemoteURL; source != nil {
-		copy := *source
-		remoteURL = &copy
+		cloned := *source
+		remoteURL = &cloned
 		if !validRemoteURL(remoteURL) {
 			return FinalizedSendPlan{}, nil, apperror.New("attachment_url", apperror.CategoryValidation, "remote attachment URL must be an absolute HTTPS URL without credentials")
 		}
@@ -176,7 +177,7 @@ func validRemoteURL(source *url.URL) bool {
 	if host == "" || strings.ContainsAny(host, "\r\n%") {
 		return false
 	}
-	return !(source.Port() == "" && strings.HasSuffix(source.Host, ":"))
+	return source.Port() != "" || !strings.HasSuffix(source.Host, ":")
 }
 
 func validateBatch(ctx context.Context, targets []domain.TargetPayload) error {

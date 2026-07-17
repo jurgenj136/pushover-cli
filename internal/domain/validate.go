@@ -30,7 +30,7 @@ func ValidateIdentifier(value string) error {
 		return invalid("identifier", "must be 30 alphanumeric characters")
 	}
 	for _, r := range value {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+		if !isASCIIAlphanumeric(r) {
 			return invalid("identifier", "must be 30 alphanumeric characters")
 		}
 	}
@@ -69,11 +69,15 @@ func ValidateDevice(device string) error {
 		return invalid("device", "must be at most 25 characters")
 	}
 	for _, r := range device {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+		if !isASCIIAlphanumeric(r) && r != '_' && r != '-' {
 			return invalid("device", "contains unsupported characters")
 		}
 	}
 	return nil
+}
+
+func isASCIIAlphanumeric(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
 
 func ValidateSavedPriority(priority int) error {

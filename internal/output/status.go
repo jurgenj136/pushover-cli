@@ -317,10 +317,3 @@ func knownCommand(command string) bool {
 		return false
 	}
 }
-
-func sendBatchCommand(batch domain.BatchResult) string {
-	if batch.Command == "" {
-		return "send"
-	}
-	return batch.Command
-}

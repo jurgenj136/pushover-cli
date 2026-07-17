@@ -106,7 +106,7 @@ func beginSetup(ctx context.Context, deps Dependencies, root rootCommand, parsed
 	return scope, admin, nil
 }
 
-func collectSetupInput(scope operation.Scope, admin AdminDependencies, prompter Prompter) (input settings.SetupInput, err error) {
+func collectSetupInput(scope operation.Scope, _ AdminDependencies, prompter Prompter) (input settings.SetupInput, err error) {
 	var secretsToWipe [][]byte
 	defer func() {
 		if err != nil {

@@ -198,7 +198,7 @@ func TestRemoteBoundsAndCancellation(t *testing.T) {
 	resolver := publicResolver("images.example")
 	base := RemoteLoader{Resolver: resolver, Scope: testScope(t)}
 	prefix := pngWithDimensions(t, 1, 1)
-	exact := append(prefix, make([]byte, domain.MaxAttachmentBytes-len(prefix))...)
+	exact := append(append([]byte(nil), prefix...), make([]byte, domain.MaxAttachmentBytes-len(prefix))...)
 	base.transportFactory = func(*pinnedDialer) http.RoundTripper {
 		return roundTripFunc(func(*http.Request) (*http.Response, error) {
 			return imageResponse(exact, http.StatusOK, int64(len(exact))), nil
@@ -207,7 +207,7 @@ func TestRemoteBoundsAndCancellation(t *testing.T) {
 	if _, err := base.Remote(context.Background(), mustURL(t, "https://images.example/exact")); err != nil {
 		t.Fatalf("exact remote boundary rejected: %v", err)
 	}
-	large := append(exact, 0)
+	large := append(append([]byte(nil), exact...), 0)
 	base.transportFactory = func(*pinnedDialer) http.RoundTripper {
 		return roundTripFunc(func(*http.Request) (*http.Response, error) {
 			// The claimed length is deliberately tiny; the streaming sentinel wins.
@@ -294,13 +294,13 @@ func TestRemotePhaseAndTransportHeaderBound(t *testing.T) {
 	if err != nil {
 		t.Skipf("loopback listener unavailable for raw TLS timeout harness: %v", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	go func() {
 		connection, acceptErr := listener.Accept()
 		if acceptErr != nil {
 			return
 		}
-		defer connection.Close()
+		defer func() { _ = connection.Close() }()
 		_, _ = io.ReadAll(connection)
 	}()
 	pinned := newPinnedDialer(publicResolver("images.example"), &forwardingDialer{address: listener.Addr().String()})
@@ -311,7 +311,10 @@ func TestRemotePhaseAndTransportHeaderBound(t *testing.T) {
 	transport.TLSHandshakeTimeout = 20 * time.Millisecond
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 	client := &http.Client{Transport: transport}
-	_, err = client.Get("https://images.example/a")
+	response, err := client.Get("https://images.example/a")
+	if response != nil {
+		_ = response.Body.Close()
+	}
 	if err == nil {
 		t.Fatal("stalled TLS handshake bypassed timeout")
 	}
@@ -328,7 +331,11 @@ func TestRemotePhaseAndTransportHeaderBound(t *testing.T) {
 	transport = newTransport(pinned)
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 	client = &http.Client{Transport: transport}
-	if _, err := client.Get("https://images.example/a"); err == nil {
+	response, err = client.Get("https://images.example/a")
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil {
 		t.Fatal("response headers above 32KiB were accepted")
 	}
 
@@ -345,7 +352,11 @@ func TestRemotePhaseAndTransportHeaderBound(t *testing.T) {
 	transport.ResponseHeaderTimeout = 20 * time.Millisecond
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 	client = &http.Client{Transport: transport}
-	if _, err := client.Get("https://images.example/a"); err == nil {
+	response, err = client.Get("https://images.example/a")
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil {
 		t.Fatal("stalled response headers bypassed timeout")
 	}
 }

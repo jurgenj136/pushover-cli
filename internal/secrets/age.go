@@ -62,11 +62,13 @@ type ageFilesystem interface {
 type osAgeFilesystem struct{}
 
 func (osAgeFilesystem) ReadFileLimited(path string, limit int) ([]byte, error) {
+	// #nosec G304 -- path is the application-owned secret-store path selected
+	// from validated configuration, not an HTTP or message input.
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
 		return nil, err
@@ -85,9 +87,12 @@ func (osAgeFilesystem) Chmod(path string, mode os.FileMode) error    { return os
 func (osAgeFilesystem) CreateTemp(path, pattern string) (ageFile, error) {
 	return os.CreateTemp(path, pattern)
 }
-func (osAgeFilesystem) Rename(oldPath, newPath string) error   { return os.Rename(oldPath, newPath) }
-func (osAgeFilesystem) Remove(path string) error               { return os.Remove(path) }
-func (osAgeFilesystem) Open(path string) (ageDirectory, error) { return os.Open(path) }
+func (osAgeFilesystem) Rename(oldPath, newPath string) error { return os.Rename(oldPath, newPath) }
+func (osAgeFilesystem) Remove(path string) error             { return os.Remove(path) }
+func (osAgeFilesystem) Open(path string) (ageDirectory, error) {
+	// #nosec G304 -- callers provide the validated application data directory.
+	return os.Open(path)
+}
 
 func (f AgeFactory) Open(ctx context.Context, backend config.Backend) (Store, error) {
 	if err := ctx.Err(); err != nil {
@@ -233,11 +238,11 @@ func (s *AgeStore) load(ctx context.Context) (map[string][]byte, error) {
 	if err != nil {
 		return nil, unavailable(err)
 	}
-	identity, _, clear, err := s.credentials(ctx)
+	identity, _, clearCredentials, err := s.credentials(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer clear()
+	defer clearCredentials()
 	reader, err := age.Decrypt(bytes.NewReader(data), identity)
 	if err != nil {
 		return nil, unavailable(err)
@@ -260,11 +265,11 @@ func (s *AgeStore) save(ctx context.Context, values map[string][]byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, recipient, clear, err := s.credentials(ctx)
+	_, recipient, clearCredentials, err := s.credentials(ctx)
 	if err != nil {
 		return err
 	}
-	defer clear()
+	defer clearCredentials()
 	plain, err := json.Marshal(ageEnvelope{Version: 1, Values: values})
 	if err != nil {
 		return unavailable(err)

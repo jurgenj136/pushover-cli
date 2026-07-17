@@ -320,11 +320,12 @@ func TestConcurrentBootstrapAcrossManagersHasOneWinnerAndCleansLoserSecrets(t *t
 
 	winner, loser := -1, -1
 	for index, err := range errs {
-		if err == nil {
+		switch {
+		case err == nil:
 			winner = index
-		} else if codeOf(err) == "configuration_already_exists" {
+		case codeOf(err) == "configuration_already_exists":
 			loser = index
-		} else {
+		default:
 			t.Fatalf("unexpected bootstrap error %d: %v", index, err)
 		}
 	}

@@ -226,14 +226,7 @@ func sendDTO(batch domain.BatchResult) sendJSON {
 		}
 		targets = append(targets, sendTargetJSON{Alias: safeHuman(target.Alias), Outcome: target.Outcome, Priority: target.Priority, RequestID: sanitizePtr(req), ReceiptID: sanitizePtr(receipt), QuotaRemaining: target.QuotaRemaining, Error: e})
 	}
-	return sendJSON{DryRun: batch.DryRun, Targets: targets, Counts: sendCountsJSON{c.Planned, c.Sent, c.Failed, c.Ambiguous, c.Skipped}}
-}
-
-func nonNil[T any](v []T) []T {
-	if v == nil {
-		return []T{}
-	}
-	return v
+	return sendJSON{DryRun: batch.DryRun, Targets: targets, Counts: sendCountsJSON(c)}
 }
 
 func safeStrings(values []string) []string {

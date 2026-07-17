@@ -71,7 +71,7 @@ func (r *Runner) Run(ctx context.Context, plan preflight.FinalizedSendPlan, opti
 	stopCaller := context.AfterFunc(ctx, cancelRun)
 	defer func() { stopCaller(); cancelRun() }()
 	confirmationCtx, cancelConfirmation := context.WithCancel(runCtx)
-	monitor := startInterruptMonitor(r.Signals, ctx, r.Scope.Context(), cancelConfirmation)
+	monitor := startInterruptMonitor(ctx, r.Scope.Context(), r.Signals, cancelConfirmation)
 	defer func() { cancelConfirmation(); monitor.close() }()
 	confirmation := plan.Confirmation()
 	if confirmation.Priority == domain.PriorityEmergency && !options.AssumeYes {
@@ -182,7 +182,7 @@ func resultFor(target domain.TargetPayload, attempt attemptedSend) domain.Target
 	return result
 }
 
-func failedBeforeSend(target domain.TargetPayload, cause error) domain.TargetResult {
+func failedBeforeSend(target domain.TargetPayload, _ error) domain.TargetResult {
 	return domain.TargetResult{
 		Alias:    target.Target.Alias,
 		Priority: target.Message.Priority,

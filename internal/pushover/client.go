@@ -27,7 +27,7 @@ func (c *HTTPClient) Send(ctx context.Context, payload domain.TargetPayload) (Se
 	if err != nil {
 		return SendResponse{}, classifySendError(err, trace)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	parsed, err := decodeAPIResponse(response)
 	if err != nil {
 		return SendResponse{}, newSendError(err, PhaseDecode, true)

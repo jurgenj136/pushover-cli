@@ -5,6 +5,7 @@ package secrets
 import (
 	"context"
 	"errors"
+
 	"github.com/jurgenj136/pushover-cli/internal/config"
 )
 
