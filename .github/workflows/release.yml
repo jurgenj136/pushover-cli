@@ -29,6 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           contract=internal/releasetest/testdata/release-contract.json
+          version="${GITHUB_REF_NAME#v}"
           {
             echo 'provenance_subjects<<EOF'
             jq -r '.provenance_subjects[]' "$contract"
@@ -37,7 +38,7 @@ jobs:
           for id in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64 windows-arm64; do
             key="${id//-/_}"
             echo "${key}_binary=$(jq -r --arg id "$id" '.archives[] | select(.id == $id) | .binary' "$contract")" >> "$GITHUB_OUTPUT"
-            echo "${key}_sbom=$(jq -r --arg id "$id" --arg version "$GITHUB_REF_NAME" '.archives[] | select(.id == $id) | .sbom | gsub("\\{\\{ \\.Version \\}\\}"; $version)' "$contract")" >> "$GITHUB_OUTPUT"
+            echo "${key}_sbom=$(jq -r --arg id "$id" --arg version "$version" '.archives[] | select(.id == $id) | .sbom | gsub("\\{\\{ \\.Version \\}\\}"; $version)' "$contract")" >> "$GITHUB_OUTPUT"
           done
       - name: Install verified Syft
         shell: bash

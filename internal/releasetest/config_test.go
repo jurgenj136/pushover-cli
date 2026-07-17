@@ -76,6 +76,31 @@ func readFile(t *testing.T, name string) string {
 	return string(bytes)
 }
 
+func workflowStepBody(t *testing.T, name, path string) string {
+	t.Helper()
+	contents := readFile(t, path)
+	marker := "- name: " + name
+	lines := strings.Split(contents, "\n")
+	inStep := false
+	var body []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) == marker {
+			inStep = true
+			continue
+		}
+		if inStep && strings.HasPrefix(strings.TrimSpace(line), "- ") {
+			break
+		}
+		if inStep {
+			body = append(body, strings.TrimSpace(line))
+		}
+	}
+	if len(body) == 0 {
+		t.Fatalf("workflow step %q not found in %s", name, path)
+	}
+	return strings.Join(body, "\n")
+}
+
 func TestReleaseContract(t *testing.T) {
 	c := readContract(t)
 	if c.Versions.GolangCILint != "v2.12.2" || c.Versions.Syft != "v1.46.0" || c.Versions.GoReleaser != "v2.17.0" || c.Versions.Skills != "1.5.9" {
@@ -187,6 +212,28 @@ func TestReleaseConfigurationUsesFrozenContract(t *testing.T) {
 	}
 }
 
+func TestSnapshotWorkflowsInstallVerifiedSyft(t *testing.T) {
+	const step = "Install verified Syft"
+	release := workflowStepBody(t, step, ".github/workflows/release.yml")
+	ci := workflowStepBody(t, step, ".github/workflows/ci.yml")
+	if release != ci {
+		t.Fatal("CI and release workflows must use the same hardened Syft installer")
+	}
+	for _, want := range []string{
+		"contract=internal/releasetest/testdata/release-contract.json",
+		"checksums_url=$(jq -r '.syft.checksums_url' \"$contract\")",
+		"asset=$(jq -r '.syft.host_asset' \"$contract\" | sed",
+		"curl --fail --location --silent --show-error --remote-name \"$checksums_url\"",
+		"grep \" $asset$\" syft_1.46.0_checksums.txt | shasum -a 256 -c -",
+		"tar -xzf \"$asset\" syft",
+		"echo \"$PWD\" >> \"$GITHUB_PATH\"",
+	} {
+		if !strings.Contains(ci, want) {
+			t.Errorf("Syft installer missing %q", want)
+		}
+	}
+}
+
 func TestWorkflowsPinEveryActionAndUseLeastPrivilege(t *testing.T) {
 	c := readContract(t)
 	bytes, err := os.ReadFile(filepath.Join(repoRoot(t), "internal/releasetest/testdata/action-pins.json"))
@@ -246,6 +293,29 @@ func TestReleaseGuardsAndPermissions(t *testing.T) {
 	for _, forbidden := range []string{"actions: write", "checks: write", "issues: write", "packages: write", "pull-requests: write"} {
 		if strings.Contains(workflow, forbidden) {
 			t.Errorf("release workflow has unnecessary permission %q", forbidden)
+		}
+	}
+}
+
+func TestReleaseWorkflowUsesGoReleaserVersionForSBOM(t *testing.T) {
+	workflow := readFile(t, ".github/workflows/release.yml")
+	if !strings.Contains(workflow, `version="${GITHUB_REF_NAME#v}"`) {
+		t.Fatal("release workflow must strip the leading v before expanding GoReleaser SBOM names")
+	}
+	if !strings.Contains(workflow, `--arg version "$version"`) {
+		t.Fatal("release workflow must expand SBOM names with the normalized release version")
+	}
+
+	const tag = "v0.1.0"
+	version := strings.TrimPrefix(tag, "v")
+	contract := readContract(t)
+	for _, archive := range contract.Archives {
+		want := strings.ReplaceAll(archive.SBOM, "{{ .Version }}", version)
+		if strings.Contains(want, "_v0.1.0_") {
+			t.Fatalf("GoReleaser SBOM name must not include the tag prefix: %q", want)
+		}
+		if !strings.Contains(want, "_0.1.0_") {
+			t.Fatalf("unexpected SBOM name for %s: %q", archive.Name, want)
 		}
 	}
 }
