@@ -9,15 +9,15 @@ import (
 
 func (c *HTTPClient) Send(ctx context.Context, payload domain.TargetPayload) (SendResponse, error) {
 	if err := validatePayload(payload); err != nil {
-		return SendResponse{}, newSendError(err, PhaseBeforeDial, true)
+		return SendResponse{}, newSendError(err, PhaseBeforeDial, false)
 	}
 	body, contentType, err := encodedPayload(payload)
 	if err != nil {
-		return SendResponse{}, newSendError(err, PhaseBeforeDial, true)
+		return SendResponse{}, newSendError(err, PhaseBeforeDial, false)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/1/messages.json", body)
 	if err != nil {
-		return SendResponse{}, newSendError(err, PhaseBeforeDial, true)
+		return SendResponse{}, newSendError(err, PhaseBeforeDial, false)
 	}
 	// A send is non-idempotent. Do not leave a replayable body available to
 	// any transport behavior beyond this package's single explicit attempt.

@@ -161,6 +161,43 @@ func TestSendNeverRetriesAndKeepsFailuresTyped(t *testing.T) {
 	}
 }
 
+func TestSendLocalValidationFailureIsDefinitivelyUnsent(t *testing.T) {
+	transport := &scriptedRoundTripper{fn: func(*http.Request, int) (*http.Response, error) {
+		t.Fatal("transport called for invalid payload")
+		return nil, nil
+	}}
+	client, err := NewTestClient("https://test.invalid", &http.Client{Transport: transport}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Send(context.Background(), domain.TargetPayload{
+		Target: domain.Target{Credentials: domain.Credentials{Token: testToken, UserKey: testUser}},
+	})
+	var send *SendError
+	if !errors.As(err, &send) || send.TransmissionPossible || send.Phase != PhaseBeforeDial || transport.calls != 0 {
+		t.Fatalf("send error = %#v calls = %d", err, transport.calls)
+	}
+}
+
+func TestSendRequestConstructionFailureIsDefinitivelyUnsent(t *testing.T) {
+	transport := &scriptedRoundTripper{fn: func(*http.Request, int) (*http.Response, error) {
+		t.Fatal("transport called when request construction failed")
+		return nil, nil
+	}}
+	client, err := NewTestClient("https://test.invalid", &http.Client{Transport: transport}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Send(nil, domain.TargetPayload{
+		Target:  domain.Target{Credentials: domain.Credentials{Token: testToken, UserKey: testUser}},
+		Message: domain.Message{Body: "body"},
+	})
+	var send *SendError
+	if !errors.As(err, &send) || send.TransmissionPossible || send.Phase != PhaseBeforeDial || transport.calls != 0 {
+		t.Fatalf("send error = %#v calls = %d", err, transport.calls)
+	}
+}
+
 func TestSendClassifiesAPIErrorsAndMalformedBodiesSafely(t *testing.T) {
 	for _, test := range []struct {
 		name           string
@@ -224,7 +261,7 @@ func TestSendRejectsMalformedEncryptedPayloadBeforeNetwork(t *testing.T) {
 			client, _ := NewTestClient("https://test.invalid", &http.Client{Transport: transport}, nil)
 			_, err := client.Send(context.Background(), domain.TargetPayload{Target: domain.Target{Kind: test.kind, Credentials: domain.Credentials{Token: testToken, UserKey: testUser}}, Message: test.message})
 			var send *SendError
-			if !errors.As(err, &send) || !send.TransmissionPossible || send.Phase != PhaseBeforeDial || transport.calls != 0 {
+			if !errors.As(err, &send) || send.TransmissionPossible || send.Phase != PhaseBeforeDial || transport.calls != 0 {
 				t.Fatalf("send error = %#v calls=%d", err, transport.calls)
 			}
 		})
