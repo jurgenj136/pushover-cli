@@ -92,6 +92,11 @@ func executeRecipientAdd(ctx context.Context, streams IO, deps Dependencies, roo
 	if inputCommand.Kind == string(domain.KindGroup) && len(inputCommand.Devices) != 0 {
 		return renderErrorWithColor(streams, deps, mode, command, apperror.New("recipient_invalid", apperror.CategoryValidation, "group recipients cannot specify devices"), root.NoColor)
 	}
+	for _, device := range inputCommand.Devices {
+		if domain.ValidateDevice(device) != nil {
+			return renderErrorWithColor(streams, deps, mode, command, apperror.New("recipient_invalid", apperror.CategoryValidation, "recipient device is invalid"), root.NoColor)
+		}
+	}
 	runtime, err := beginAdmin(ctx, deps, root, parsed)
 	if err != nil {
 		return renderErrorWithColor(streams, deps, mode, command, asAppError(err), root.NoColor)
@@ -111,6 +116,12 @@ func executeRecipientAdd(ctx context.Context, streams IO, deps Dependencies, roo
 		return renderErrorWithColor(streams, deps, mode, command, asAppError(err), root.NoColor)
 	}
 	defer wipePromptBytes(e2eeKey)
+	if domain.ValidateCredentials(domain.Credentials{Token: "000000000000000000000000000000", UserKey: string(userKey)}) != nil {
+		return renderErrorWithColor(streams, deps, mode, command, apperror.New("recipient_invalid", apperror.CategoryValidation, "recipient key is invalid"), root.NoColor)
+	}
+	if len(e2eeKey) != 0 && domain.ValidateE2EEKey(e2eeKey) != nil {
+		return renderErrorWithColor(streams, deps, mode, command, apperror.New("recipient_invalid", apperror.CategoryValidation, "recipient encryption key is invalid"), root.NoColor)
+	}
 	input := settings.RecipientInput{Alias: root.Recipients.Add.Alias, Kind: domain.TargetKind(root.Recipients.Add.Kind), Devices: append([]string(nil), root.Recipients.Add.Devices...), UserKey: userKey, E2EEKey: e2eeKey}
 	if !root.Recipients.Add.Offline {
 		validation, err := validateNewRecipient(runtime, deps, root.Profile, userKey, input.Devices)

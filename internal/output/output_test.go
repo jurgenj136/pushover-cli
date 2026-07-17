@@ -76,6 +76,26 @@ func TestJSONErrorOneDocument(t *testing.T) {
 	}
 }
 
+func TestErrorRenderersAcceptIncompleteParentCommandPaths(t *testing.T) {
+	for _, command := range []string{"profiles", "recipients"} {
+		for name, renderer := range map[string]Renderer{
+			"human": HumanRenderer{},
+			"json":  JSONRenderer{},
+			"plain": PlainRenderer{},
+		} {
+			t.Run(name+"/"+command, func(t *testing.T) {
+				var rendered bytes.Buffer
+				if err := renderer.Error(&rendered, command, apperror.New("invalid_command", apperror.CategoryUsage, "invalid command line")); err != nil {
+					t.Fatalf("render parent command error: %v", err)
+				}
+				if rendered.Len() == 0 {
+					t.Fatal("renderer produced no error output")
+				}
+			})
+		}
+	}
+}
+
 func TestJSONAllResultTypesAndArrays(t *testing.T) {
 	results := []CommandResult{
 		ProfilesResult{Meta: Meta{"profiles list", "success"}}, RecipientsResult{Meta: Meta{"recipients list", "success"}},

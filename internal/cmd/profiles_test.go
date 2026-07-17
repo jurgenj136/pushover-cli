@@ -52,11 +52,28 @@ func TestPreScannedNestedCommandIgnoresGlobalFlagValues(t *testing.T) {
 	}{
 		{[]string{"--profile", "recipients", "profiles", "list"}, "profiles list"},
 		{[]string{"--timeout=1s", "recipients", "validate", "ops"}, "recipients validate"},
-		{[]string{"profiles"}, "profiles list"},
-		{[]string{"recipients", "--"}, "recipients list"},
+		{[]string{"profiles"}, "profiles"},
+		{[]string{"recipients", "--"}, "recipients"},
 	} {
 		if got := preScannedCommand(test.args); got != test.want {
 			t.Fatalf("preScannedCommand(%q) = %q, want %q", test.args, got, test.want)
+		}
+	}
+}
+
+func TestNestedParentParseErrorsUseExactJSONCommandPath(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--json", "profiles"}, `"command":"profiles"`},
+		{[]string{"--json", "profiles", "unknown"}, `"command":"profiles"`},
+		{[]string{"--json", "recipients"}, `"command":"recipients"`},
+		{[]string{"--json", "recipients", "unknown"}, `"command":"recipients"`},
+	} {
+		var stdout, stderr bytes.Buffer
+		if got := Execute(context.Background(), test.args, testIO(&stdout, &stderr), Dependencies{}); got != 2 || stdout.Len() != 0 || !bytes.Contains(stderr.Bytes(), []byte(test.want)) || !bytes.Contains(stderr.Bytes(), []byte(`"status":"error"`)) {
+			t.Fatalf("args=%q exit=%d stdout=%q stderr=%q", test.args, got, stdout.String(), stderr.String())
 		}
 	}
 }
@@ -100,6 +117,11 @@ func TestProfilesRemoveYesAndConflictAvoidUnnecessaryWork(t *testing.T) {
 	stderr.Reset()
 	if got := Execute(context.Background(), []string{"profiles", "remove", "work", "--yes"}, testIO(&stdout, &stderr), deps); got != 0 || service.removeProfiles != 1 || prompter.confirmed {
 		t.Fatalf("yes exit=%d removals=%d confirmed=%t", got, service.removeProfiles, prompter.confirmed)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if got := Execute(context.Background(), []string{"profiles", "remove", "work", "--replace-with", "other", "--force=false", "--yes"}, testIO(&stdout, &stderr), deps); got != 0 || service.removeProfiles != 2 {
+		t.Fatalf("force=false exit=%d removals=%d stderr=%q", got, service.removeProfiles, stderr.String())
 	}
 }
 

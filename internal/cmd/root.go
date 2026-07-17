@@ -175,7 +175,7 @@ func preScannedCommand(args []string) string {
 					return "profiles " + args[index+1]
 				}
 			}
-			return "profiles list"
+			return "profiles"
 		case "recipients":
 			if index+1 < len(args) {
 				switch args[index+1] {
@@ -183,7 +183,7 @@ func preScannedCommand(args []string) string {
 					return "recipients " + args[index+1]
 				}
 			}
-			return "recipients list"
+			return "recipients"
 		}
 	}
 	return "send"

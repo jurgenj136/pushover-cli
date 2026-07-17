@@ -51,7 +51,7 @@ func executeProfiles(ctx context.Context, streams IO, deps Dependencies, root ro
 			return exit
 		}
 	}
-	if command == "profiles remove" && flagSeen(parsed, "replace-with") && flagSeen(parsed, "force") {
+	if command == "profiles remove" && root.Profiles.Remove.ReplaceWith != "" && root.Profiles.Remove.Force {
 		return renderErrorWithColor(streams, deps, mode, command, apperror.New("profile_removal_options_conflict", apperror.CategoryUsage, "profile removal options cannot be combined"), root.NoColor)
 	}
 	if command == "profiles add" {

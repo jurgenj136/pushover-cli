@@ -25,7 +25,7 @@ func TestExecuteRecipientsListPlain(t *testing.T) {
 }
 
 func TestRecipientsAddOfflineSkipsAPIAndWipesAnswers(t *testing.T) {
-	userKey := []byte("uuuuuuuuuuuuuuuuuuuuuuuuuuuuuu")
+	userKey := []byte("111111111111111111111111111111")
 	e2eeKey := []byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	service := &adminSettingsFake{}
 	api := &adminAPIFake{}
@@ -43,7 +43,7 @@ func TestRecipientsAddOfflineSkipsAPIAndWipesAnswers(t *testing.T) {
 }
 
 func TestRecipientsAddAllowsEmptyOptionalE2EEKey(t *testing.T) {
-	userKey := []byte("uuuuuuuuuuuuuuuuuuuuuuuuuuuuuu")
+	userKey := []byte("111111111111111111111111111111")
 	service := &adminSettingsFake{}
 	prompter := &adminPrompterFake{answers: [][]byte{userKey, []byte{}}}
 	var stdout, stderr bytes.Buffer
@@ -60,7 +60,7 @@ func TestRecipientsAddPreservesExplicitAndUnknownKindsOffline(t *testing.T) {
 		{"", domain.KindUnknown}, {"user", domain.KindUser}, {"group", domain.KindGroup}, {"team-group", domain.KindTeamGroup},
 	} {
 		service := &adminSettingsFake{}
-		prompter := &adminPrompterFake{answers: [][]byte{[]byte("uuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"), nil}}
+		prompter := &adminPrompterFake{answers: [][]byte{[]byte("111111111111111111111111111111"), nil}}
 		args := []string{"recipients", "add", "ops", "--offline"}
 		if test.kind != "" {
 			args = append(args, "--kind", test.kind)
@@ -75,7 +75,7 @@ func TestRecipientsAddPreservesExplicitAndUnknownKindsOffline(t *testing.T) {
 func TestRecipientsAddOnlineInvalidResponseDoesNotMutate(t *testing.T) {
 	service := &adminSettingsFake{token: []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}
 	api := &adminAPIFake{validations: []pushover.RecipientValidation{{Valid: false}}}
-	prompter := &adminPrompterFake{answers: [][]byte{[]byte("uuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"), nil}}
+	prompter := &adminPrompterFake{answers: [][]byte{[]byte("111111111111111111111111111111"), nil}}
 	var stdout, stderr bytes.Buffer
 	got := Execute(context.Background(), []string{"recipients", "add", "ops"}, testIO(&stdout, &stderr), Dependencies{Admin: AdminDependencies{Settings: service, API: api}, Prompter: prompter})
 	if got != 4 || service.addRecipients != 0 || len(api.keys) != 1 {
@@ -86,7 +86,7 @@ func TestRecipientsAddOnlineInvalidResponseDoesNotMutate(t *testing.T) {
 func TestRecipientsAddOnlineAPIErrorDoesNotMutate(t *testing.T) {
 	service := &adminSettingsFake{token: []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}
 	api := &adminAPIFake{err: errors.New("network down")}
-	prompter := &adminPrompterFake{answers: [][]byte{[]byte("uuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"), nil}}
+	prompter := &adminPrompterFake{answers: [][]byte{[]byte("111111111111111111111111111111"), nil}}
 	var stdout, stderr bytes.Buffer
 	if got := Execute(context.Background(), []string{"recipients", "add", "ops"}, testIO(&stdout, &stderr), Dependencies{Admin: AdminDependencies{Settings: service, API: api}, Prompter: prompter}); got != 1 || service.addRecipients != 0 {
 		t.Fatalf("exit=%d adds=%d", got, service.addRecipients)
@@ -94,7 +94,7 @@ func TestRecipientsAddOnlineAPIErrorDoesNotMutate(t *testing.T) {
 }
 
 func TestRecipientsAddOnlinePersistsValidatedInputAndUsesOneScope(t *testing.T) {
-	userKey := []byte("uuuuuuuuuuuuuuuuuuuuuuuuuuuuuu")
+	userKey := []byte("111111111111111111111111111111")
 	e2eeKey := []byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	service := &adminSettingsFake{token: []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}
 	api := &adminAPIFake{validations: []pushover.RecipientValidation{{Valid: true}}}
@@ -106,7 +106,7 @@ func TestRecipientsAddOnlinePersistsValidatedInputAndUsesOneScope(t *testing.T) 
 	if got != 0 || service.addRecipients != 1 || !service.recipientInput.Validated || service.recipientInput.Kind != domain.KindTeamGroup || spy.calls != 2 {
 		t.Fatalf("exit=%d adds=%d validated=%t kind=%q scope-calls=%d", got, service.addRecipients, service.recipientInput.Validated, service.recipientInput.Kind, spy.calls)
 	}
-	if service.userKeyAtAdd != "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuu" || service.e2eeKeyAtAdd == "" || !allZero(userKey) || !allZero(e2eeKey) || !allZero(service.recipientInput.UserKey) || !allZero(service.recipientInput.E2EEKey) {
+	if service.userKeyAtAdd != "111111111111111111111111111111" || service.e2eeKeyAtAdd == "" || !allZero(userKey) || !allZero(e2eeKey) || !allZero(service.recipientInput.UserKey) || !allZero(service.recipientInput.E2EEKey) {
 		t.Fatal("recipient secrets were not supplied then wiped")
 	}
 	if got := service.recipientInput.Devices; !reflect.DeepEqual(got, []string{"phone"}) {
@@ -126,6 +126,41 @@ func TestRecipientsAddRejectsUnsafeKindAndGroupDevicesBeforePrompt(t *testing.T)
 		if got := Execute(context.Background(), args, testIO(&stdout, &stderr), Dependencies{Admin: AdminDependencies{Settings: service}, Prompter: prompter}); got != 4 || prompter.reads != 0 || service.addRecipients != 0 {
 			t.Fatalf("args=%q exit=%d prompts=%d adds=%d", args, got, prompter.reads, service.addRecipients)
 		}
+	}
+}
+
+func TestRecipientsAddRejectsMalformedDeviceBeforePromptOrNetwork(t *testing.T) {
+	service := &adminSettingsFake{token: []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}
+	api := &adminAPIFake{}
+	prompter := &adminPrompterFake{answers: [][]byte{[]byte("unused")}}
+	var stdout, stderr bytes.Buffer
+	got := Execute(context.Background(), []string{"recipients", "add", "ops", "--device", "bad device"}, testIO(&stdout, &stderr), Dependencies{Admin: AdminDependencies{Settings: service, API: api}, Prompter: prompter})
+	if got != 4 || prompter.reads != 0 || len(api.keys) != 0 || service.addRecipients != 0 {
+		t.Fatalf("exit=%d prompts=%d api=%d adds=%d", got, prompter.reads, len(api.keys), service.addRecipients)
+	}
+}
+
+func TestRecipientsAddRejectsMalformedPromptSecretsBeforeNetworkAndWipes(t *testing.T) {
+	validUser := "111111111111111111111111111111"
+	validE2EE := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, test := range []struct {
+		name string
+		user []byte
+		e2ee []byte
+	}{
+		{name: "user key", user: []byte("short"), e2ee: []byte(validE2EE)},
+		{name: "e2ee key", user: []byte(validUser), e2ee: []byte("not-hex")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &adminSettingsFake{token: []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}
+			api := &adminAPIFake{}
+			prompter := &adminPrompterFake{answers: [][]byte{test.user, test.e2ee}}
+			var stdout, stderr bytes.Buffer
+			got := Execute(context.Background(), []string{"recipients", "add", "ops"}, testIO(&stdout, &stderr), Dependencies{Admin: AdminDependencies{Settings: service, API: api}, Prompter: prompter})
+			if got != 4 || len(api.keys) != 0 || service.addRecipients != 0 || !allZero(test.user) || !allZero(test.e2ee) {
+				t.Fatalf("exit=%d api=%d adds=%d user-wiped=%t e2ee-wiped=%t", got, len(api.keys), service.addRecipients, allZero(test.user), allZero(test.e2ee))
+			}
+		})
 	}
 }
 
