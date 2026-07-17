@@ -68,10 +68,13 @@ func TestTerminalPrompterUsesPasswordReaderForSecretOnFileInput(t *testing.T) {
 	var output bytes.Buffer
 	prompt := TerminalPrompter{
 		Input: file, Stderr: &output, IsTTY: func(io.Reader) bool { return true },
-		passwordRead: func(fd int) ([]byte, error) {
+		passwordRead: func(fd, maximum int) ([]byte, error) {
 			calls++
 			if fd != int(file.Fd()) {
 				t.Fatalf("password reader fd = %d, want stdin fd %d", fd, file.Fd())
+			}
+			if maximum != maxPromptBytes {
+				t.Fatalf("password reader maximum = %d, want %d", maximum, maxPromptBytes)
 			}
 			return []byte("not-echoed"), nil
 		},
@@ -98,7 +101,7 @@ func TestTerminalPrompterWipesOversizedPasswordReaderResult(t *testing.T) {
 	secret := bytes.Repeat([]byte("x"), maxPromptBytes+1)
 	prompt := TerminalPrompter{
 		Input: file, Stderr: io.Discard, IsTTY: func(io.Reader) bool { return true },
-		passwordRead: func(int) ([]byte, error) {
+		passwordRead: func(int, int) ([]byte, error) {
 			return secret, nil
 		},
 	}
@@ -148,7 +151,7 @@ func TestTerminalPrompterRejectsEOFAndOversizedInputWithoutLeakingSecret(t *test
 	}
 }
 
-func TestTerminalPrompterBlockingReadObservesCancellation(t *testing.T) {
+func TestTerminalPrompterCancellationKeepsSynchronousInputOwnership(t *testing.T) {
 	reader := &promptBlockingReader{started: make(chan struct{}), release: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -161,13 +164,95 @@ func TestTerminalPrompterBlockingReadObservesCancellation(t *testing.T) {
 	cancel()
 	select {
 	case err := <-result:
+		t.Fatalf("prompt returned before its synchronous reader completed: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(reader.release)
+	select {
+	case err := <-result:
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("err = %v, want context cancellation", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("blocking prompt read ignored cancellation")
+		t.Fatal("prompt did not return after its reader completed")
+	}
+	if reader.reads != 1 {
+		t.Fatalf("prompt read input %d times, want one owned read", reader.reads)
+	}
+}
+
+func TestTerminalPrompterConfirmationCancellationKeepsSynchronousInputOwnership(t *testing.T) {
+	reader := &promptBlockingReader{started: make(chan struct{}), release: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- (TerminalPrompter{Input: reader, Stderr: io.Discard, IsTTY: func(io.Reader) bool { return true }}).Confirm(ctx, PromptSummary{Action: "Remove profile"})
+	}()
+	<-reader.started
+	cancel()
+	select {
+	case err := <-result:
+		t.Fatalf("confirmation returned before its synchronous reader completed: %v", err)
+	case <-time.After(25 * time.Millisecond):
 	}
 	close(reader.release)
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("confirmation did not return after its reader completed")
+	}
+	if reader.reads != 1 {
+		t.Fatalf("confirmation read input %d times, want one owned read", reader.reads)
+	}
+}
+
+func TestBoundedTerminalPasswordRestoresNoEchoAndConsumesOversizedLine(t *testing.T) {
+	t.Run("success strips CRLF and restores", func(t *testing.T) {
+		terminal := &fakePasswordTerminal{input: []byte("secret\r\n")}
+		value, err := readTerminalPasswordWith(7, maxPromptBytes, terminal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer wipePromptBytes(value)
+		if string(value) != "secret" {
+			t.Fatalf("password = %q", value)
+		}
+		if terminal.disableCalls != 1 || terminal.restoreCalls != 1 {
+			t.Fatalf("disable=%d restore=%d, want one each", terminal.disableCalls, terminal.restoreCalls)
+		}
+	})
+
+	t.Run("oversized input stays bounded and drains its line", func(t *testing.T) {
+		terminal := &fakePasswordTerminal{input: append(bytes.Repeat([]byte("x"), maxPromptBytes+3), []byte("\r\nnext\r\n")...)}
+		value, err := readTerminalPasswordWith(7, maxPromptBytes, terminal)
+		if err == nil || value != nil {
+			t.Fatalf("value=%q err=%v, want bounded failure", value, err)
+		}
+		if terminal.maximumRead > 1 {
+			t.Fatalf("terminal read buffer = %d, want at most one byte", terminal.maximumRead)
+		}
+		if got := string(terminal.input[terminal.offset:]); got != "next\r\n" {
+			t.Fatalf("remaining input = %q, want next line", got)
+		}
+		if terminal.restoreCalls != 1 {
+			t.Fatalf("restore calls = %d, want one", terminal.restoreCalls)
+		}
+	})
+
+	t.Run("restore failure discards the password", func(t *testing.T) {
+		terminal := &fakePasswordTerminal{input: []byte("secret\n"), restoreErr: errors.New("restore failed")}
+		value, err := readTerminalPasswordWith(7, maxPromptBytes, terminal)
+		if err == nil || value != nil {
+			t.Fatalf("value=%q err=%v, want restoration failure", value, err)
+		}
+		if terminal.restoreCalls != 1 {
+			t.Fatalf("restore calls = %d, want one", terminal.restoreCalls)
+		}
+	})
 }
 
 func TestTerminalPrompterConfirmationRendersSanitizedSummary(t *testing.T) {
@@ -194,6 +279,7 @@ func (r *promptReadMustNotHappen) Read([]byte) (int, error) {
 type promptBlockingReader struct {
 	started chan struct{}
 	release chan struct{}
+	reads   int
 }
 
 type recordingPrompter struct{ answer []byte }
@@ -202,6 +288,7 @@ func (p *recordingPrompter) Read(context.Context, Prompt) ([]byte, error) { retu
 func (*recordingPrompter) Confirm(context.Context, PromptSummary) error   { return nil }
 
 func (r *promptBlockingReader) Read([]byte) (int, error) {
+	r.reads++
 	select {
 	case <-r.started:
 	default:
@@ -210,3 +297,33 @@ func (r *promptBlockingReader) Read([]byte) (int, error) {
 	<-r.release
 	return 0, io.EOF
 }
+
+type fakePasswordTerminal struct {
+	input                      []byte
+	offset                     int
+	disableCalls, restoreCalls int
+	maximumRead                int
+	restoreErr                 error
+}
+
+func (t *fakePasswordTerminal) disableEcho(int) (func() error, error) {
+	t.disableCalls++
+	return func() error {
+		t.restoreCalls++
+		return t.restoreErr
+	}, nil
+}
+
+func (t *fakePasswordTerminal) read(_ int, output []byte) (int, error) {
+	if len(output) > t.maximumRead {
+		t.maximumRead = len(output)
+	}
+	if t.offset == len(t.input) {
+		return 0, io.EOF
+	}
+	count := copy(output, t.input[t.offset:])
+	t.offset += count
+	return count, nil
+}
+
+func (*fakePasswordTerminal) lineTerminator() byte { return '\n' }

@@ -16,7 +16,10 @@ const maxPromptBytes = 4096
 
 // Prompter owns the interactive boundary. Read returns a caller-owned byte
 // slice; callers must wipe it as soon as they have copied it into a service
-// request. Prompt summaries contain only safe, non-secret metadata.
+// request. Prompt summaries contain only safe, non-secret metadata. Context is
+// checked before and after each synchronous input operation; the reader owns
+// how that operation is interrupted. No prompt goroutine or caller-stream
+// close is used, so a canceled call cannot keep consuming later input.
 type Prompter interface {
 	Read(context.Context, Prompt) ([]byte, error)
 	Confirm(context.Context, PromptSummary) error
@@ -34,13 +37,14 @@ type PromptSummary struct {
 	Subjects []string
 }
 
-// TerminalPrompter is injectable for tests. Real terminal secret input uses
-// term.ReadPassword; non-file readers use the bounded hermetic reader below.
+// TerminalPrompter is injectable for tests. Real terminal secret input uses a
+// bounded, no-echo platform reader; injected readers use the same bounded line
+// core without changing terminal state.
 type TerminalPrompter struct {
 	Input        io.Reader
 	Stderr       io.Writer
 	IsTTY        func(io.Reader) bool
-	passwordRead func(int) ([]byte, error)
+	passwordRead func(int, int) ([]byte, error)
 }
 
 func (p TerminalPrompter) Read(ctx context.Context, request Prompt) ([]byte, error) {
@@ -66,16 +70,16 @@ func (p TerminalPrompter) Read(ctx context.Context, request Prompt) ([]byte, err
 	var err error
 	if request.Secret {
 		if file, ok := input.(*os.File); ok {
-			// ReadPassword manages echo state itself. Do not put it in a
-			// cancellable goroutine: abandoning that read could leave terminal
-			// state or a later input consumer behind. Ctrl-C and EOF are handled
-			// by the terminal read; after it returns, a canceled context discards
-			// the answer before it can reach a handler.
+			// Terminal state and input ownership stay in this call. Do not put a
+			// password read in a cancellable goroutine: abandoning it could leave
+			// echo state or a later input consumer behind. Ctrl-C and EOF are
+			// handled by the platform read; after it returns, cancellation
+			// discards the answer before it can reach a handler.
 			passwordRead := p.passwordRead
 			if passwordRead == nil {
-				passwordRead = term.ReadPassword
+				passwordRead = readTerminalPassword
 			}
-			raw, err = passwordRead(int(file.Fd()))
+			raw, err = passwordRead(int(file.Fd()), maxPromptBytes)
 			if _, writeErr := fmt.Fprintln(stderr); writeErr != nil && err == nil {
 				err = writeErr
 			}
@@ -88,12 +92,15 @@ func (p TerminalPrompter) Read(ctx context.Context, request Prompt) ([]byte, err
 				err = ctx.Err()
 			}
 		} else {
-			raw, err = awaitPromptRead(ctx, func() ([]byte, error) { return readPromptLine(input) })
+			raw, err = readPromptLine(input)
 		}
 	} else {
-		raw, err = awaitPromptRead(ctx, func() ([]byte, error) { return readPromptLine(input) })
+		raw, err = readPromptLine(input)
 	}
 	defer wipePromptBytes(raw)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return nil, contextErr
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
@@ -130,8 +137,11 @@ func (p TerminalPrompter) Confirm(ctx context.Context, summary PromptSummary) er
 	if _, err := fmt.Fprintf(stderr, "%s? [y/N]: ", action); err != nil {
 		return promptError("confirmation_unavailable", "confirmation could not be shown")
 	}
-	raw, err := awaitPromptRead(ctx, func() ([]byte, error) { return readPromptLine(input) })
+	raw, err := readPromptLine(input)
 	defer wipePromptBytes(raw)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
@@ -169,51 +179,84 @@ func promptTerminal(reader io.Reader) bool {
 	return ok && term.IsTerminal(int(file.Fd()))
 }
 
-type promptReadResult struct {
-	value []byte
-	err   error
+func readPromptLine(reader io.Reader) ([]byte, error) {
+	return readBoundedLine(reader.Read, maxPromptBytes, '\n')
 }
 
-// awaitPromptRead does not close caller-owned stdin. An unbuffered result and
-// abandonment channel ensure a secret returned after cancellation is wiped by
-// the reader goroutine rather than left queued in a channel buffer.
-func awaitPromptRead(ctx context.Context, read func() ([]byte, error)) ([]byte, error) {
-	result := make(chan promptReadResult)
-	abandon := make(chan struct{})
-	go func() {
-		value, err := read()
-		select {
-		case result <- promptReadResult{value: value, err: err}:
-		case <-abandon:
+type passwordTerminal interface {
+	disableEcho(int) (func() error, error)
+	read(int, []byte) (int, error)
+	lineTerminator() byte
+}
+
+func readTerminalPasswordWith(fd, maximum int, terminal passwordTerminal) (value []byte, err error) {
+	if maximum <= 0 || terminal == nil {
+		return nil, errors.New("terminal password input is unavailable")
+	}
+	restore, err := terminal.disableEcho(fd)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if restoreErr := restore(); restoreErr != nil {
 			wipePromptBytes(value)
+			value = nil
+			err = restoreErr
 		}
 	}()
-	select {
-	case <-ctx.Done():
-		close(abandon)
-		return nil, ctx.Err()
-	case value := <-result:
-		return value.value, value.err
+	value, err = readBoundedLine(func(output []byte) (int, error) {
+		return terminal.read(fd, output)
+	}, maximum, terminal.lineTerminator())
+	if err != nil {
+		wipePromptBytes(value)
+		value = nil
 	}
+	return value, err
 }
 
-func readPromptLine(reader io.Reader) ([]byte, error) {
+func readBoundedLine(read func([]byte) (int, error), maximum int, terminator byte) ([]byte, error) {
+	if maximum <= 0 {
+		return nil, errors.New("prompt input is unavailable")
+	}
 	line := make([]byte, 0, 64)
 	var byteBuffer [1]byte
 	defer wipePromptBytes(byteBuffer[:])
+	tooLarge := false
 	for {
-		count, err := reader.Read(byteBuffer[:])
+		count, err := read(byteBuffer[:])
 		if count > 0 {
-			if byteBuffer[0] == '\n' {
+			character := byteBuffer[0]
+			if character == terminator {
+				if tooLarge {
+					return nil, errors.New("prompt input is too large")
+				}
 				return line, nil
 			}
-			if len(line) == maxPromptBytes {
-				wipePromptBytes(line)
-				return nil, errors.New("prompt input is too large")
+			if character == '\r' || character == '\n' {
+				continue
 			}
-			line = append(line, byteBuffer[0])
+			if character == '\b' {
+				if !tooLarge && len(line) > 0 {
+					line[len(line)-1] = 0
+					line = line[:len(line)-1]
+				}
+				continue
+			}
+			if tooLarge {
+				continue
+			}
+			if len(line) == maximum {
+				wipePromptBytes(line)
+				line = nil
+				tooLarge = true
+				continue
+			}
+			line = append(line, character)
 		}
 		if err != nil {
+			if tooLarge {
+				return nil, errors.New("prompt input is too large")
+			}
 			return line, err
 		}
 		if count == 0 {
@@ -223,9 +266,10 @@ func readPromptLine(reader io.Reader) ([]byte, error) {
 	}
 }
 
-// promptPassphrase copies an answer before wiping the prompt's ownership.
-// AgeStore wipes the returned copy after deriving its credentials, so the
-// callback retains no secret between operations.
+// promptPassphrase copies an answer before wiping the prompt-owned buffer. The
+// callback captures no returned bytes. Backend and age-library immutable or
+// derived allocations have their own lifetimes and are outside this seam's
+// wiping guarantee.
 func promptPassphrase(prompter Prompter) func(context.Context) ([]byte, error) {
 	return func(ctx context.Context) ([]byte, error) {
 		if prompter == nil {

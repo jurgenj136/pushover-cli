@@ -13,6 +13,16 @@ import (
 
 type adminFactory func(context.Context) (AdminDependencies, error)
 
+// buildInfo is intentionally independent from the lazy admin runtime. Version
+// output must remain available even when paths, environment, or admin services
+// are unavailable.
+func (d Dependencies) buildInfo() buildinfo.Info {
+	if d.Admin.Build != (buildinfo.Info{}) {
+		return d.Admin.Build
+	}
+	return buildinfo.Current()
+}
+
 // openAdmin returns injected dependencies unchanged. Production construction
 // is deferred until an admin command reaches the point where it needs them.
 func (d Dependencies) openAdmin(ctx context.Context) (AdminDependencies, error) {

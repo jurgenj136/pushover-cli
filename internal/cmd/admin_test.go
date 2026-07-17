@@ -45,6 +45,45 @@ func TestOpenAdminPrefersInjectedDependencies(t *testing.T) {
 	}
 }
 
+func TestBuildInfoNeverOpensAdminRuntimeOrReadsEnvironment(t *testing.T) {
+	injected := buildinfo.Info{Version: "injected", Commit: "test", Date: "now"}
+	tests := []struct {
+		name string
+		deps Dependencies
+		want buildinfo.Info
+	}{
+		{
+			name: "injected",
+			deps: Dependencies{Admin: AdminDependencies{Build: injected}, admin: func(context.Context) (AdminDependencies, error) {
+				t.Fatal("build info opened admin runtime")
+				return AdminDependencies{}, errors.New("unreachable")
+			}, lookupEnv: func(string) (string, bool) {
+				t.Fatal("build info read environment")
+				return "", false
+			}},
+			want: injected,
+		},
+		{
+			name: "compiled default",
+			deps: Dependencies{admin: func(context.Context) (AdminDependencies, error) {
+				t.Fatal("build info opened admin runtime")
+				return AdminDependencies{}, errors.New("unreachable")
+			}, lookupEnv: func(string) (string, bool) {
+				t.Fatal("build info read environment")
+				return "", false
+			}},
+			want: buildinfo.Current(),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.deps.buildInfo(); got != test.want {
+				t.Fatalf("build info = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestOpenAdminSettingsDoesNotOpenSecretsWhenConfigurationIsMissing(t *testing.T) {
 	store := &adminStore{loadErr: config.ErrNotFound}
 	factory := &adminSecretFactory{}
