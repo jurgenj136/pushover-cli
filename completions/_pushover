@@ -1,17 +1,67 @@
 #compdef pushover
 
+_pushover_path() {
+  local index=2 word root="" child="" nested=""
+  while (( index < CURRENT )); do
+    word="${words[index]}"
+    case "${word}" in
+      --profile|--timeout) (( index += 2 )); continue ;;
+      --profile=*|--timeout=*|--json|--plain|--no-color|--json=*|--plain=*|--no-color=*) (( index += 1 )); continue ;;
+    esac
+    if [[ -z "${root}" ]]; then
+      root="${word}"
+    elif [[ ( "${root}" == profiles || "${root}" == recipients || "${root}" == auth ) && -z "${child}" ]]; then
+      child="${word}"
+    elif [[ "${root}" == auth && "${child}" == backend && -z "${nested}" ]]; then
+      nested="${word}"
+    fi
+    (( index += 1 ))
+  done
+  case "${root}:${child}:${nested}" in
+    ::) print -r -- root ;;
+    send::) print -r -- send ;;
+    profiles::) print -r -- profiles ;;
+    profiles:add:) print -r -- profiles-add ;;
+    profiles:remove:) print -r -- profiles-remove ;;
+    profiles:*) print -r -- profiles-leaf ;;
+    recipients::) print -r -- recipients ;;
+    recipients:add:) print -r -- recipients-add ;;
+    recipients:remove:) print -r -- recipients-remove ;;
+    recipients:*) print -r -- recipients-leaf ;;
+    auth::) print -r -- auth ;;
+    auth:backend:) print -r -- auth-backend ;;
+    auth:backend:set) print -r -- auth-backend-set ;;
+    auth:*) print -r -- auth-leaf ;;
+    completion::) print -r -- completion ;;
+    *) print -r -- leaf ;;
+  esac
+}
+
 _pushover() {
-  local -a commands global_flags send_flags
-  commands=(send completion)
+  local -a commands global_flags send_flags profile_commands recipient_commands auth_commands
+  local previous="${words[CURRENT - 1]}" path
+  commands=(setup send profiles recipients sounds limits auth info version completion)
   global_flags=(--profile --json --plain --no-color --timeout)
   send_flags=(--to --title --device --priority --sound --timestamp --ttl --url --url-title --html --monospace --attachment --attachment-url --encrypted --retry --expire --validate --validate-network --dry-run --yes --stdin --file --credentials-stdin)
-  if (( CURRENT == 2 )); then
-    _describe -t commands 'pushover command' commands
-    return
-  fi
-  case "${words[2]}" in
-    send) _describe -t flags 'send flag' send_flags ;;
-    completion) _values 'shell' bash zsh fish ;;
+  profile_commands=(add list show use remove)
+  recipient_commands=(add list show validate remove)
+  auth_commands=(status backend)
+  case "${previous}" in --profile|--timeout) return ;; esac
+  path="$(_pushover_path)"
+  case "${path}" in
+    root) _values 'pushover command' ${commands[@]} ${global_flags[@]} ;;
+    send) _values 'send flag' ${send_flags[@]} ${global_flags[@]} ;;
+    profiles) _values 'profiles command' ${profile_commands[@]} ${global_flags[@]} ;;
+    profiles-add) _values 'profile add flag' --title --url --url-title --sound --device --priority --ttl ${global_flags[@]} ;;
+    profiles-remove) _values 'profile remove flag' --replace-with --force --yes ${global_flags[@]} ;;
+    recipients) _values 'recipients command' ${recipient_commands[@]} ${global_flags[@]} ;;
+    recipients-add) _values 'recipient add flag' --kind --device --offline ${global_flags[@]} ;;
+    recipients-remove) _values 'recipient remove flag' --yes ${global_flags[@]} ;;
+    auth) _values 'auth command' ${auth_commands[@]} ${global_flags[@]} ;;
+    auth-backend) _values 'backend command' set ${global_flags[@]} ;;
+    auth-backend-set) _values 'backend destination' native file ${global_flags[@]} ;;
+    completion) _values 'shell' bash zsh fish ${global_flags[@]} ;;
+    *) _values 'global flag' ${global_flags[@]} ;;
   esac
 }
 
