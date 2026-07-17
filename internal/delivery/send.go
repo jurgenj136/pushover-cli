@@ -182,16 +182,27 @@ func resultFor(target domain.TargetPayload, attempt attemptedSend) domain.Target
 	return result
 }
 
-func failedBeforeSend(target domain.TargetPayload, _ error) domain.TargetResult {
+func failedBeforeSend(target domain.TargetPayload, cause error) domain.TargetResult {
 	return domain.TargetResult{
 		Alias:    target.Target.Alias,
 		Priority: target.Message.Priority,
 		Outcome:  domain.Failed,
-		Error: &domain.ErrorDetail{
-			Code:     "operation_timeout",
-			Category: apperror.CategoryNetwork,
-			Message:  "operation deadline exceeded",
-		},
+		Error:    beforeSendDetail(cause),
+	}
+}
+
+func beforeSendDetail(cause error) *domain.ErrorDetail {
+	var typed *apperror.Error
+	if errors.As(cause, &typed) && typed != nil {
+		return apperror.SafeDetail(cause)
+	}
+	switch {
+	case errors.Is(cause, context.Canceled):
+		return &domain.ErrorDetail{Code: "operation_canceled", Category: apperror.CategoryNetwork, Message: "operation canceled"}
+	case errors.Is(cause, context.DeadlineExceeded):
+		return &domain.ErrorDetail{Code: "operation_timeout", Category: apperror.CategoryNetwork, Message: "operation deadline exceeded"}
+	default:
+		return apperror.SafeDetail(cause)
 	}
 }
 

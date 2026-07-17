@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jurgenj136/pushover-cli/internal/apperror"
 	"github.com/jurgenj136/pushover-cli/internal/delivery"
 	"github.com/jurgenj136/pushover-cli/internal/operation"
 	"github.com/jurgenj136/pushover-cli/internal/output"
@@ -63,6 +64,25 @@ func TestExecuteRequiresExplicitSendCommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "error:") {
 		t.Fatalf("stderr = %q, want safe usage diagnostic", stderr.String())
+	}
+}
+
+func TestAsAppErrorDistinguishesCancellationFromDeadline(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		err         error
+		wantCode    string
+		wantMessage string
+	}{
+		{name: "cancellation", err: context.Canceled, wantCode: "operation_canceled", wantMessage: "operation canceled"},
+		{name: "deadline", err: context.DeadlineExceeded, wantCode: "operation_timeout", wantMessage: "operation deadline exceeded"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := asAppError(test.err)
+			if got.Code != test.wantCode || got.Category != apperror.CategoryNetwork || got.Message != test.wantMessage {
+				t.Fatalf("asAppError(%v) = %#v, want %s/%s", test.err, got, test.wantCode, test.wantMessage)
+			}
+		})
 	}
 }
 

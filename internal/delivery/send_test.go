@@ -68,11 +68,62 @@ func TestRunPreCanceledCallerReturnsOrderedDefiniteBatch(t *testing.T) {
 					t.Fatalf("result[%d] = %s, want %s", index, batch.Results[index].Outcome, want)
 				}
 			}
+			if detail := batch.Results[0].Error; detail == nil || detail.Code != "operation_canceled" || detail.Category != apperror.CategoryNetwork || detail.Message != "operation canceled" {
+				t.Fatalf("first result detail = %#v, want safe cancellation detail", detail)
+			}
 			if got := apperror.Exit(nil, &batch); got != test.wantExit {
 				t.Fatalf("exit = %d, want %d", got, test.wantExit)
 			}
 			if client.CallCount() != 0 || confirmer.CallCount() != 0 {
 				t.Fatalf("pre-canceled run mutated: sends=%d confirms=%d", client.CallCount(), confirmer.CallCount())
+			}
+		})
+	}
+}
+
+func TestRunPreDeadlineCallerReportsTimeoutWithoutSend(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	client := &scriptedClient{}
+	runner, closeScope := newRunner(t, client, nil, nil)
+	defer closeScope()
+
+	batch, err := runner.Run(ctx, finalizedPlan(t, 1, domain.PriorityNormal), RunOptions{})
+	if err != nil {
+		t.Fatalf("command error = %v, want ordered batch", err)
+	}
+	if len(batch.Results) != 1 || batch.Results[0].Outcome != domain.Failed {
+		t.Fatalf("results = %#v, want one definite failure", batch.Results)
+	}
+	if detail := batch.Results[0].Error; detail == nil || detail.Code != "operation_timeout" || detail.Category != apperror.CategoryNetwork || detail.Message != "operation deadline exceeded" {
+		t.Fatalf("result detail = %#v, want safe timeout detail", detail)
+	}
+	if got := client.CallCount(); got != 0 {
+		t.Fatalf("Send calls = %d, want 0", got)
+	}
+}
+
+func TestFailedBeforeSendPreservesOnlySafeCauseDetails(t *testing.T) {
+	target := domain.TargetPayload{Target: domain.Target{Alias: "ops"}, Message: domain.Message{Priority: domain.PriorityHigh}}
+	typed := apperror.New("phase_setup_failed", apperror.CategoryInternal, "safe phase setup failure")
+	for _, test := range []struct {
+		name  string
+		cause error
+		want  domain.ErrorDetail
+	}{
+		{name: "cancellation", cause: context.Canceled, want: domain.ErrorDetail{Code: "operation_canceled", Category: apperror.CategoryNetwork, Message: "operation canceled"}},
+		{name: "deadline", cause: context.DeadlineExceeded, want: domain.ErrorDetail{Code: "operation_timeout", Category: apperror.CategoryNetwork, Message: "operation deadline exceeded"}},
+		{name: "typed internal error", cause: typed, want: domain.ErrorDetail{Code: "phase_setup_failed", Category: apperror.CategoryInternal, Message: "safe phase setup failure"}},
+		{name: "unknown cause is redacted", cause: errors.New("raw operation secret"), want: domain.ErrorDetail{Code: apperror.CodeInternal, Category: apperror.CategoryInternal, Message: apperror.MessageInternal}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := failedBeforeSend(target, test.cause)
+			if result.Error == nil || *result.Error != test.want {
+				t.Fatalf("detail = %#v, want %#v", result.Error, test.want)
+			}
+			if result.Alias != "ops" || result.Priority != domain.PriorityHigh || result.Outcome != domain.Failed {
+				t.Fatalf("result = %#v, want failed ops result", result)
 			}
 		})
 	}
@@ -353,6 +404,9 @@ func TestRunCancellationDuringConfirmationReturnsOrderedDefiniteBatch(t *testing
 			}
 			if batch.Interrupted || len(batch.Results) != 2 || batch.Results[0].Outcome != domain.Failed || batch.Results[1].Outcome != domain.Skipped {
 				t.Fatalf("batch = %#v", batch)
+			}
+			if detail := batch.Results[0].Error; detail == nil || detail.Code != "operation_canceled" || detail.Category != apperror.CategoryNetwork || detail.Message != "operation canceled" {
+				t.Fatalf("first result detail = %#v, want safe cancellation detail", detail)
 			}
 			if got := client.CallCount(); got != 0 {
 				t.Fatalf("Send calls = %d, want 0", got)

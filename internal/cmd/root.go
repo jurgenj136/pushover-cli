@@ -312,12 +312,15 @@ func parseTimeout(raw string, present bool) (*time.Duration, error) {
 }
 
 func asAppError(err error) *apperror.Error {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return apperror.New("operation_timeout", apperror.CategoryNetwork, "operation deadline exceeded")
-	}
 	var typed *apperror.Error
 	if errors.As(err, &typed) && typed != nil {
 		return typed
+	}
+	if errors.Is(err, context.Canceled) {
+		return apperror.New("operation_canceled", apperror.CategoryNetwork, "operation canceled")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return apperror.New("operation_timeout", apperror.CategoryNetwork, "operation deadline exceeded")
 	}
 	return apperror.New(apperror.CodeInternal, apperror.CategoryInternal, apperror.MessageInternal)
 }
